@@ -2,27 +2,14 @@ package com.animeext.downloader.resolver
 
 object AdChainDomScripts {
 
+    /**
+     * Non-invasive DOM overlay cleaner. Does NOT overwrite `window.open` or `document.hidden`
+     * descriptors (which anti-tamper shorteners/indexes detect and redirect to error pages);
+     * popup blocking is enforced natively by WebChromeClient.onCreateWindow + AdFilterPolicy.
+     */
     const val DOCUMENT_START_JS = """
 (function() {
   'use strict';
-  try {
-    Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
-    Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
-    Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; }, configurable: true });
-  } catch (_) {}
-
-  try {
-    window.open = function() { return null; };
-  } catch (_) {}
-
-  // Neutralize Notification permission prompts inside pages
-  try {
-    if (window.Notification) {
-      Object.defineProperty(window.Notification, 'permission', { get: function() { return 'denied'; } });
-      window.Notification.requestPermission = function() { return Promise.resolve('denied'); };
-    }
-  } catch (_) {}
-
   function cleanOverlays() {
     try {
       var vw = window.innerWidth || 0;
