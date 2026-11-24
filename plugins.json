@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=animevilla.org&sz=128",
-        "fileHash": "sha256-81fc8c2f8c013202b5aa02af43fd4370ba5a2ccd20f905eb3da239885f5c455a",
+        "fileHash": "sha256-14318b7de4595e04b3affe0a6fd00d6e5d2ec6bc8730e9d47f184e76a2402ffe",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
-        "fileSize": 82937,
+        "fileSize": 99252,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -13,7 +13,7 @@
         "tvTypes": [
             "Anime"
         ],
-        "version": 4,
+        "version": 5,
         "internalName": "AnimeVilla",
         "description": "Hindi Dubbed Anime & Embedded HLS Streams from AnimeVilla (animevilla.org)",
         "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/AnimeVilla.cs3",
@@ -21,10 +21,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=hindisubbedacademy.com&sz=128",
-        "fileHash": "sha256-1ea8f67e9f41aa7f543d15e302e6203321ae5db8769e3af4ab3a2875145ce9d9",
+        "fileHash": "sha256-e5cc932080affb1139c8c9904ca7dc9e1ef256c98a5b43c6e0910c2607f833e7",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
-        "fileSize": 82971,
+        "fileSize": 99286,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -33,7 +33,7 @@
         "tvTypes": [
             "Anime"
         ],
-        "version": 4,
+        "version": 5,
         "internalName": "HindiSubbedAcademy",
         "description": "Hindi Subbed Anime from Hindi Subbed Academy (hindisubbedacademy.com)",
         "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/HindiSubbedAcademy.cs3",
@@ -41,10 +41,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=www.lordsanime.com&sz=128",
-        "fileHash": "sha256-f3d4883ec04e59ab63013d4873e261bddfcf3cfc7fd80d9397ccb5264b766b1b",
+        "fileHash": "sha256-9488e0dd632da1f5d9fef6d33005fd25d900e563ced60edeb8a72bb30d686624",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
-        "fileSize": 82970,
+        "fileSize": 99257,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -53,7 +53,7 @@
         "tvTypes": [
             "Anime"
         ],
-        "version": 4,
+        "version": 5,
         "internalName": "LordsAnime",
         "description": "Hindi Subbed Anime from Lord's Anime (lordsanime.com) with remote domains.json support",
         "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/LordsAnime.cs3",
@@ -61,10 +61,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=www.tpxsub.com&sz=128",
-        "fileHash": "sha256-0db8aebf0c72775ec46fd038dc3751adbfc4feca7b1066afb39cd10c8f4bf475",
+        "fileHash": "sha256-675af1e1f27d11760cd43c505b6370f58d4d922536f1fc8f06dcfa66bab51024",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
-        "fileSize": 82948,
+        "fileSize": 99242,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -73,7 +73,7 @@
         "tvTypes": [
             "Anime"
         ],
-        "version": 4,
+        "version": 5,
         "internalName": "TpxSub",
         "description": "Hindi Subbed Anime from TpXAnime (tpxsub.com) with 480p/720p/1080p stream support",
         "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/TpxSub.cs3",
@@ -81,10 +81,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=ybxanime.com&sz=128",
-        "fileHash": "sha256-af62fad062ca9fc67423927dabee6b0816892d3564f8114865f20c18df553333",
+        "fileHash": "sha256-83108f1d718ba4a7c128edef0dce3179813008b788465625f9525f12b53b6505",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
-        "fileSize": 82954,
+        "fileSize": 99288,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -93,7 +93,7 @@
         "tvTypes": [
             "Anime"
         ],
-        "version": 4,
+        "version": 5,
         "internalName": "YbxAnime",
         "description": "Hindi Subbed Anime from YBX Anime (ybxanime.com) with remote domains.json support",
         "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/YbxAnime.cs3",
