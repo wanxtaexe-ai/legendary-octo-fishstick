@@ -196,7 +196,7 @@ class AdChainResolverTest {
         assertTrue(unresolvedGate is ValidatedDestination.Invalid)
 
         val decodedTpx = AdProviderRecognizer.unwrapTokenUrl(
-            "https://links.tpxsub.com/redirect/main2.php?url=z3u3v3t3s3w1y1n1e36333u3p3r2w2f2r3t3z3v2x2e3p353g1j14262c221d1p2r2g121d181p2k2d272p1m1q2p1l2n2o1g1m1422281j2d2c282g2h2u1n262j2n23121p1e1t2j112f1l2t1h2w202s2g1u2o232i171e1g191j17121m1g1b1i1u2f2f2g181m2d2g1t2n23212s2q2n2p221q2m2n2p2i2v1"
+            "https://links.tpxsub.com/redirect/main2.php?url=f41616t5k40314s2v44646s2r5p5m4q4i4l4c444s216l434b4m5l494p4v2n4y2b3u2r2t2x2x2n244v31595a5m2j3t5n4h4j5q5q4t524f3t444l4b49474v5s2v5b4z3t4c4b4u205o4f4n4c4l4r2p3o2y2t2q45424m2e315q4a424r4i3m424h4o4v224j494k4s5p4"
         )
         assertEquals(
             "https://www.mirrored.to/files/F2A10447/[TPX]-Moribito.Guardian.of.the.Spirit.S01.E01-HSub-FHD.mp4_links",
