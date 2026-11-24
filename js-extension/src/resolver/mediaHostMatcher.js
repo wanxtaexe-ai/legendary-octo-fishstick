@@ -13,10 +13,19 @@ const AD_AND_NOISE_HOSTS = [
   'propellerads.com',
   'onclickads.net',
   'adsterra.com',
+  'highperformanceformat.com',
+  'effectiveratecpm.com',
+  'profitablegate.com',
+  'hilltopads.net',
+  'admaven.com',
+  'monetag.com',
   'exoclick.com',
   'juicyads.com',
+  'trafficjunky.net',
   'mc.yandex.ru',
 ];
+
+const EXTERNAL_HIJACK_SCHEMES = ['intent:', 'market:', 'tg:', 'whatsapp:', 'upi:', 'tel:'];
 
 const NON_MEDIA_EXTENSIONS = /\.(css|js|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|ts|vtt|srt)(\?.*)?$/i;
 const DIRECT_VIDEO_EXTENSION = /\.(mp4|m3u8|mkv|webm)(\?.*)?$/i;
@@ -24,19 +33,43 @@ const PIXELDRAIN_RE = /^https?:\/\/(?:www\.)?pixeldrain\.(?:com|dev)\/(?:u|api\/
 const GOFILE_RE = /^https?:\/\/(?:[a-z0-9-]+\.)?gofile\.io\/(?:d|download)\/([a-zA-Z0-9_-]+)/i;
 const ASURA_DIRECT_RE = /^https?:\/\/(?:www\.)?asurasever\.cloud\/.+\.(mp4|mkv|webm|m3u8)(\?.*)?$/i;
 
+export function isExternalHijackScheme(url) {
+  if (!url) return false;
+  const lower = String(url).trim().toLowerCase();
+  return EXTERNAL_HIJACK_SCHEMES.some((scheme) => lower.startsWith(scheme));
+}
+
+export function isKnownAdHost(url) {
+  if (!url) return false;
+  try {
+    const { hostname } = new URL(url);
+    const host = hostname.toLowerCase();
+    return AD_AND_NOISE_HOSTS.some((adHost) => host === adHost || host.endsWith(`.${adHost}`));
+  } catch {
+    return false;
+  }
+}
+
+export function getAdStubResponse(url) {
+  const lower = String(url || '').toLowerCase();
+  if (/\.js(\?|$)/.test(lower)) {
+    return {
+      mimeType: 'application/javascript',
+      body: '/* ad-stub */ window.adsbygoogle = window.adsbygoogle || [];',
+    };
+  }
+  if (/\.css(\?|$)/.test(lower)) {
+    return { mimeType: 'text/css', body: '/* ad-stub */' };
+  }
+  return { mimeType: 'text/html', body: '<!doctype html><html><body></body></html>' };
+}
+
 export function isAdOrNoiseUrl(url) {
   if (!url) return true;
   const lower = String(url).toLowerCase();
   if (!lower.startsWith('http://') && !lower.startsWith('https://')) return true;
   if (NON_MEDIA_EXTENSIONS.test(lower)) return true;
-  try {
-    const { hostname } = new URL(url);
-    return AD_AND_NOISE_HOSTS.some(
-      (adHost) => hostname === adHost || hostname.endsWith(`.${adHost}`)
-    );
-  } catch {
-    return true;
-  }
+  return isKnownAdHost(url);
 }
 
 /**

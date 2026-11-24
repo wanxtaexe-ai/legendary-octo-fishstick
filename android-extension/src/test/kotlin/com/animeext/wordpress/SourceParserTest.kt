@@ -84,6 +84,31 @@ class SourceParserTest {
     }
 
     @Test
+    fun `webview controller blocks popups, intent schemes, and captures download listener`() {
+        val controller = WebViewSessionController(
+            initialUrl = "https://hsalinks.eu.org/short.php?link=step1",
+            expectedQuality = QualityLabel.Q_720P
+        )
+
+        assertTrue(controller.shouldOverrideUrlLoading("intent://spam/#Intent;scheme=https;end"))
+        assertTrue(controller.shouldOverrideUrlLoading("https://adsterra.com/redirect", isForMainFrame = true))
+        assertEquals(false, controller.onPopupAttempt("https://popads.net/win"))
+        assertTrue(controller.blockedHijacksCount >= 3)
+
+        controller.adFilterEnabled = false
+        val (blockedWhenOff, _) = controller.shouldInterceptRequest("https://adsterra.com/script.js")
+        assertEquals(false, blockedWhenOff)
+
+        val dl = controller.onDownloadTriggered(
+            "https://cdn.example.net/ep1.mp4",
+            "video/mp4",
+            "attachment; filename=ep1.mp4"
+        )
+        assertNotNull(dl)
+        assertEquals("https://cdn.example.net/ep1.mp4", dl?.url)
+    }
+
+    @Test
     fun `http client persists cookies across mock server redirects`() = runTest {
         val server = MockWebServer()
         server.enqueue(

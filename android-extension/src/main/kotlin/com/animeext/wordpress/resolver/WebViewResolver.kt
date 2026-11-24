@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.ViewGroup
+import android.os.Message
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -37,6 +38,7 @@ class WebViewSessionController(
     val initialUrl: String,
     private val baseHeaders: Map<String, String> = emptyMap(),
     private val expectedQuality: QualityLabel = QualityLabel.UNKNOWN,
+    var adFilterEnabled: Boolean = true,
     private val onResolved: (ResolvedStream) -> Unit = {},
     private val onCancelled: () -> Unit = {}
 ) {
@@ -47,6 +49,8 @@ class WebViewSessionController(
     var currentUrl: String = initialUrl
         private set
     var resolvedStream: ResolvedStream? = null
+        private set
+    var blockedHijacksCount: Int = 0
         private set
 
     val history = mutableListOf(initialUrl)
@@ -62,6 +66,63 @@ class WebViewSessionController(
     }
 
     /**
+     * Evaluates a navigation request from WebViewClient.shouldOverrideUrlLoading.
+     * Blocks intent:// / market:// / tg:// hijacks, captures direct media hosts,
+     * and prevents main-frame ad redirects from pulling the user off the chain page.
+     */
+    fun shouldOverrideUrlLoading(url: String, isForMainFrame: Boolean = true): Boolean {
+        if (status != Status.PENDING) return false
+        if (MediaHostPatterns.isExternalHijackScheme(url)) {
+            blockedHijacksCount++
+            return true
+        }
+        if (inspectUrl(url, source = "navigation-override") != null) {
+            return true
+        }
+        if (adFilterEnabled && isForMainFrame && MediaHostPatterns.isAdHost(url)) {
+            blockedHijacksCount++
+            return true
+        }
+        return false
+    }
+
+    fun onPopupAttempt(url: String?): Boolean {
+        if (status != Status.PENDING) return false
+        if (!url.isNullOrBlank()) {
+            inspectUrl(url, source = "popup-window")
+        }
+        blockedHijacksCount++
+        return false
+    }
+
+    fun onDownloadTriggered(
+        url: String,
+        mimeType: String = "",
+        contentDisposition: String = ""
+    ): ResolvedStream? {
+        if (status != Status.PENDING || url.isBlank()) return null
+        inspectUrl(url, source = "download-listener", mimeTypeHint = mimeType)?.let { return it }
+
+        if (contentDisposition.contains("attachment", ignoreCase = true) ||
+            mimeType.startsWith("video/", ignoreCase = true)
+        ) {
+            val stream = ResolvedStream(
+                url = url,
+                originalUrl = url,
+                hostType = "download",
+                mimeType = mimeType.ifBlank { "video/mp4" },
+                quality = expectedQuality,
+                headers = baseHeaders + mapOf("Referer" to currentUrl),
+                resolvedVia = "webview-download-listener"
+            )
+            detectedCandidates.add(stream)
+            complete(stream)
+            return stream
+        }
+        return null
+    }
+
+    /**
      * Evaluates a sub-resource or navigation request from WebViewClient.shouldInterceptRequest.
      * Returns Pair(shouldBlockAdRequest, resolvedStreamOrNull).
      */
@@ -70,7 +131,8 @@ class WebViewSessionController(
         requestHeaders: Map<String, String> = emptyMap()
     ): Pair<Boolean, ResolvedStream?> {
         if (status != Status.PENDING) return false to resolvedStream
-        if (MediaHostPatterns.isAdHost(url)) {
+        if (adFilterEnabled && MediaHostPatterns.isAdHost(url)) {
+            blockedHijacksCount++
             return true to null
         }
         if (MediaHostPatterns.isAdOrNoiseUrl(url)) {
@@ -228,8 +290,26 @@ class WebViewResolverDialogFragment : DialogFragment() {
             setPadding(16, 8, 16, 8)
         }
 
+        val backButton = Button(ctx).apply {
+            text = "Back"
+            setOnClickListener {
+                if (webView?.canGoBack() == true) {
+                    webView?.goBack()
+                }
+            }
+        }
+
+        val filterToggleButton = Button(ctx).apply {
+            text = "Filter: ON"
+            setOnClickListener {
+                controller.adFilterEnabled = !controller.adFilterEnabled
+                text = if (controller.adFilterEnabled) "Filter: ON" else "Filter: OFF"
+                webView?.reload()
+            }
+        }
+
         val handoffButton = Button(ctx).apply {
-            text = "Play Detected Video"
+            text = "Play Video"
             setOnClickListener {
                 val latestCandidate = controller.detectedCandidates.lastOrNull()?.url
                     ?: webView?.url
@@ -243,6 +323,8 @@ class WebViewResolverDialogFragment : DialogFragment() {
             setOnClickListener { controller.cancel() }
         }
 
+        actionBar.addView(backButton)
+        actionBar.addView(filterToggleButton)
         actionBar.addView(handoffButton)
         actionBar.addView(closeButton)
 
@@ -255,6 +337,8 @@ class WebViewResolverDialogFragment : DialogFragment() {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                setSupportMultipleWindows(true)
+                javaScriptCanOpenWindowsAutomatically = false
                 mediaPlaybackRequiresUserGesture = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 userAgentString = httpClient?.userAgent ?: userAgentString
@@ -274,16 +358,38 @@ class WebViewResolverDialogFragment : DialogFragment() {
                 "AndroidStreamBridge"
             )
 
+            setDownloadListener { url, _, contentDisposition, mimetype, _ ->
+                controller.onDownloadTriggered(url, mimetype.orEmpty(), contentDisposition.orEmpty())
+            }
+
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     progressBar.progress = newProgress
                 }
+
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: Message?
+                ): Boolean {
+                    val hitUrl = view?.hitTestResult?.extra
+                    return controller.onPopupAttempt(hitUrl)
+                }
             }
 
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    val reqUrl = request?.url?.toString() ?: return false
+                    return controller.shouldOverrideUrlLoading(reqUrl, request.isForMainFrame)
+                }
+
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                     if (!url.isNullOrBlank()) {
-                        urlText.text = url
+                        urlText.text = "[Blocked: ${controller.blockedHijacksCount}] $url"
                         controller.onPageStarted(url)
                     }
                 }
@@ -300,7 +406,12 @@ class WebViewResolverDialogFragment : DialogFragment() {
                     val reqHeaders = request.requestHeaders ?: emptyMap()
                     val (blockAd, _) = controller.shouldInterceptRequest(reqUrl, reqHeaders)
                     if (blockAd) {
-                        return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                        val (mime, body) = MediaHostPatterns.getAdStubResponse(reqUrl)
+                        return WebResourceResponse(
+                            mime,
+                            "utf-8",
+                            ByteArrayInputStream(body.toByteArray(Charsets.UTF_8))
+                        )
                     }
                     return super.shouldInterceptRequest(view, request)
                 }

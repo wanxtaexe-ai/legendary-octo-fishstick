@@ -1,6 +1,9 @@
 import {
   extractEmbeddedVideoSources,
+  getAdStubResponse,
   isAdOrNoiseUrl,
+  isExternalHijackScheme,
+  isKnownAdHost,
   matchDirectMediaHost,
 } from './mediaHostMatcher.js';
 
@@ -71,18 +74,30 @@ export class WebViewResolverSession {
    * @param {string} [params.expectedQuality]
    * @param {number} [params.timeoutMs]
    */
-  constructor({ initialUrl, headers = {}, expectedQuality = 'Unknown', timeoutMs = 120_000 }) {
+  constructor({
+    initialUrl,
+    headers = {},
+    expectedQuality = 'Unknown',
+    timeoutMs = 120_000,
+    adFilterEnabled = true,
+  }) {
     this.initialUrl = initialUrl;
     this.currentUrl = initialUrl;
     this.headers = headers;
     this.expectedQuality = expectedQuality;
     this.timeoutMs = timeoutMs;
+    this.adFilterEnabled = adFilterEnabled;
+    this.blockedHijacksCount = 0;
     this.history = [initialUrl];
     this.detectedCandidates = [];
     this.status = 'pending'; // 'pending' | 'resolved' | 'cancelled' | 'timeout'
     this.resolvedStream = null;
     this._resolvePromise = null;
     this._rejectPromise = null;
+  }
+
+  setAdFilterEnabled(enabled) {
+    this.adFilterEnabled = Boolean(enabled);
   }
 
   /**
@@ -98,21 +113,99 @@ export class WebViewResolverSession {
   }
 
   /**
+   * Models WebViewClient.shouldOverrideUrlLoading:
+   * - Blocks intent://, market://, tg:// external app hijacks.
+   * - Captures direct media host navigations immediately.
+   * - Blocks main-frame hijacks to known ad networks so user stays on current chain page.
+   */
+  shouldOverrideUrlLoading(url, { isForMainFrame = true } = {}) {
+    if (this.status !== 'pending') {
+      return { overrideLoad: false, reason: 'not-pending', resolvedStream: this.resolvedStream };
+    }
+
+    if (isExternalHijackScheme(url)) {
+      this.blockedHijacksCount++;
+      return { overrideLoad: true, reason: 'blocked-external-scheme', resolvedStream: null };
+    }
+
+    const directHit = this.inspectUrl(url, 'navigation-override');
+    if (directHit) {
+      return { overrideLoad: true, reason: 'media-detected', resolvedStream: directHit };
+    }
+
+    if (this.adFilterEnabled && isForMainFrame && isKnownAdHost(url)) {
+      this.blockedHijacksCount++;
+      return { overrideLoad: true, reason: 'blocked-ad-redirect', resolvedStream: null };
+    }
+
+    return { overrideLoad: false, reason: 'allow-navigation', resolvedStream: null };
+  }
+
+  /**
+   * Models WebChromeClient.onCreateWindow for target="_blank" / window.open() popunders.
+   */
+  onPopupAttempt(url) {
+    if (this.status !== 'pending') {
+      return { allowPopup: false, resolvedStream: this.resolvedStream };
+    }
+    if (url) {
+      const mediaHit = this.inspectUrl(url, 'popup-window');
+      if (mediaHit) {
+        return { allowPopup: false, resolvedStream: mediaHit };
+      }
+    }
+    this.blockedHijacksCount++;
+    return { allowPopup: false, reason: 'blocked-popunder', resolvedStream: null };
+  }
+
+  /**
+   * Models WebView.setDownloadListener for attachment-triggered media hosts (Pixeldrain/Gofile/MP4).
+   */
+  onDownloadTriggered(url, mimeType = '', contentDisposition = '') {
+    if (this.status !== 'pending' || !url) return null;
+    const hit = this.inspectUrl(url, 'download-listener', {}, mimeType);
+    if (hit) return hit;
+
+    if (/attachment/i.test(contentDisposition) || /^video\//i.test(mimeType)) {
+      const stream = {
+        url,
+        originalUrl: url,
+        hostType: 'download',
+        mimeType: mimeType || 'video/mp4',
+        quality: this.expectedQuality,
+        headers: {
+          ...this.headers,
+          Referer: this.currentUrl,
+        },
+        resolvedVia: 'webview-download-listener',
+      };
+      this.detectedCandidates.push(stream);
+      this._complete(stream);
+      return stream;
+    }
+    return null;
+  }
+
+  /**
    * Called from WebViewClient.shouldInterceptRequest(view, request).
-   * Returns `{ blockRequest: boolean, resolvedStream?: object }`.
+   * Returns `{ blockRequest: boolean, stubResponse?: { mimeType, body }, resolvedStream?: object }`.
    */
   shouldInterceptRequest(url, requestHeaders = {}) {
     if (this.status !== 'pending') {
       return { blockRequest: false, resolvedStream: this.resolvedStream };
     }
+
+    if (this.adFilterEnabled && isKnownAdHost(url)) {
+      this.blockedHijacksCount++;
+      return {
+        blockRequest: true,
+        stubResponse: getAdStubResponse(url),
+        resolvedStream: null,
+      };
+    }
+
     if (isAdOrNoiseUrl(url)) {
-      const lower = String(url).toLowerCase();
-      const isAdHost =
-        lower.includes('doubleclick') ||
-        lower.includes('popads') ||
-        lower.includes('adsterra') ||
-        lower.includes('googlesyndication');
-      return { blockRequest: isAdHost, resolvedStream: null };
+      return { blockRequest: false, resolvedStream: null };
     }
 
     const match = this.inspectUrl(url, 'network-intercept', requestHeaders);

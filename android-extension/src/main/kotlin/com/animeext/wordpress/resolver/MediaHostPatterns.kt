@@ -23,9 +23,25 @@ object MediaHostPatterns {
         "propellerads.com",
         "onclickads.net",
         "adsterra.com",
+        "highperformanceformat.com",
+        "effectiveratecpm.com",
+        "profitablegate.com",
+        "hilltopads.net",
+        "admaven.com",
+        "monetag.com",
         "exoclick.com",
         "juicyads.com",
+        "trafficjunky.net",
         "mc.yandex.ru"
+    )
+
+    private val externalHijackSchemes = listOf(
+        "intent:",
+        "market:",
+        "tg:",
+        "whatsapp:",
+        "upi:",
+        "tel:"
     )
 
     private val nonMediaExtRegex =
@@ -38,6 +54,24 @@ object MediaHostPatterns {
         Regex("^https?://(?:[a-z0-9-]+\\.)?gofile\\.io/(?:d|download)/([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
     private val asuraDirectRegex =
         Regex("^https?://(?:www\\.)?asurasever\\.cloud/.+\\.(mp4|mkv|webm|m3u8)(\\?.*)?$", RegexOption.IGNORE_CASE)
+
+    fun isExternalHijackScheme(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val lower = url.trim().lowercase()
+        return externalHijackSchemes.any { lower.startsWith(it) }
+    }
+
+    fun getAdStubResponse(url: String?): Pair<String, String> {
+        val lower = url.orEmpty().lowercase()
+        return when {
+            Regex("\\.js(\\?|$)").containsMatchIn(lower) ->
+                "application/javascript" to "/* ad-stub */ window.adsbygoogle = window.adsbygoogle || [];"
+            Regex("\\.css(\\?|$)").containsMatchIn(lower) ->
+                "text/css" to "/* ad-stub */"
+            else ->
+                "text/html" to "<!doctype html><html><body></body></html>"
+        }
+    }
 
     fun isAdHost(url: String): Boolean {
         val host = runCatching { URI(url).host?.lowercase() }.getOrNull() ?: return false
