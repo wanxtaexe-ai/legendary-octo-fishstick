@@ -223,6 +223,8 @@ fun AnimeVaultScreen(vm: MainViewModel) {
         if (ui.resolver.active && !ui.sandboxState.visibleToUser) {
             ResolverTraceDialog(
                 state = ui.resolver,
+                canOpenSandbox = ui.sandboxState.webView != null,
+                onOpenSandbox = { ui.sandboxState.onForceShow() },
                 onDismiss = { vm.dismissResolver() },
                 onPickTarget = { target ->
                     vm.pickResolvedTarget(ui.resolver.title, "Download", target, ui.resolver.wantDownload)
@@ -695,6 +697,8 @@ private fun SeriesDetailDialog(
 @Composable
 private fun ResolverTraceDialog(
     state: ResolverUiState,
+    canOpenSandbox: Boolean,
+    onOpenSandbox: () -> Unit,
     onDismiss: () -> Unit,
     onPickTarget: (com.animeext.downloader.model.ResolvedTarget) -> Unit
 ) {
@@ -727,6 +731,13 @@ private fun ResolverTraceDialog(
                             Text(t.fileNameHint ?: "File #${idx + 1}")
                         }
                     }
+                }
+            }
+        },
+        dismissButton = {
+            if (canOpenSandbox) {
+                TextButton(onClick = onOpenSandbox) {
+                    Text("Open Sandbox")
                 }
             }
         },
