@@ -115,13 +115,24 @@ abstract class WordPressBaseProvider(
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val cfg = refreshBaseUrl()
-        val url = if (page <= 1) {
-            val latest = cfg.latestPath.let { if (it.startsWith("/")) it else "/$it" }
-            "$mainUrl$latest"
+        val rawData = request.data.trim()
+        val url = if (rawData.isBlank()) {
+            if (page <= 1) {
+                val latest = cfg.latestPath.let { if (it.startsWith("/")) it else "/$it" }
+                "$mainUrl$latest"
+            } else {
+                val pagePath = cfg.pagePath.replace("{page}", page.toString())
+                    .let { if (it.startsWith("/")) it else "/$it" }
+                "$mainUrl$pagePath"
+            }
         } else {
-            val pagePath = cfg.pagePath.replace("{page}", page.toString())
-                .let { if (it.startsWith("/")) it else "/$it" }
-            "$mainUrl$pagePath"
+            val section = if (rawData.startsWith("/")) rawData else "/$rawData"
+            if (page <= 1) {
+                "$mainUrl$section"
+            } else {
+                val baseSection = section.replace(Regex("/page/\\d+/?$"), "").trimEnd('/')
+                "$mainUrl$baseSection/page/$page/"
+            }
         }
 
         val html = app.get(url).text
@@ -139,6 +150,24 @@ abstract class WordPressBaseProvider(
         RESOLVED,
         SKIP_WEBVIEW,
         TRY_WEBVIEW
+    }
+
+    private suspend fun searchKiranimeTitleApi(baseUrl: String, encodedQuery: String): List<ParsedCard> {
+        val apiUrl = "$baseUrl/wp-json/kiranime/v1/anime/title?query=$encodedQuery"
+        val body = runCatching { app.get(apiUrl).text.trim() }.getOrNull().orEmpty()
+        if (!body.startsWith("[")) return emptyList()
+        return runCatching {
+            val arr = JSONArray(body)
+            val cards = mutableListOf<ParsedCard>()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val slug = item.optString("slug", "").trim()
+                val title = Jsoup.parse(item.optString("title", "")).text().replace(Regex("\\s+"), " ").trim()
+                if (slug.isBlank() || title.isBlank()) continue
+                cards.add(ParsedCard(title = title, url = "$baseUrl/anime/$slug/"))
+            }
+            cards
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun searchWpJson(baseUrl: String, endpointType: String, encodedQuery: String): List<ParsedCard> {
@@ -172,7 +201,9 @@ abstract class WordPressBaseProvider(
 
         val isKiranime = cfg.theme.equals("kiranime", ignoreCase = true) || cfg.supportsEmbeddedPlayer
         var cards = if (isKiranime) {
-            searchWpJson(mainUrl, "anime", encoded)
+            searchWpJson(mainUrl, "anime", encoded).ifEmpty {
+                searchKiranimeTitleApi(mainUrl, encoded)
+            }
         } else {
             emptyList()
         }
