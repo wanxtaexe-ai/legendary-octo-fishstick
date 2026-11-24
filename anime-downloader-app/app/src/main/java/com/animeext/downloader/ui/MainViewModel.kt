@@ -327,12 +327,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (targets.size == 1) {
             val chosen = targets.first()
-            if (wantDownload && !chosen.isHls) {
+            if ((wantDownload || chosen.megaKeyHex != null) && !chosen.isHls) {
                 app.downloadEngine.enqueueDownload(seriesTitle, episodeLabel, chosen)
+                val msg = if (chosen.megaKeyHex != null && !wantDownload) {
+                    "Mega.nz is AES-encrypted — downloading & decrypting to Library!"
+                } else {
+                    "Queued download: $seriesTitle · $episodeLabel"
+                }
                 _ui.update {
                     it.copy(
                         resolver = ResolverUiState(active = false),
-                        statusBanner = "Queued download: $seriesTitle · $episodeLabel",
+                        statusBanner = msg,
                         currentTab = MainTab.DOWNLOADS,
                         selectedSeries = null
                     )
@@ -357,7 +362,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pickResolvedTarget(seriesTitle: String, episodeLabel: String, target: ResolvedTarget, wantDownload: Boolean) {
-        if (wantDownload && !target.isHls) {
+        if ((wantDownload || target.megaKeyHex != null) && !target.isHls) {
             app.downloadEngine.enqueueDownload(seriesTitle, episodeLabel, target)
             _ui.update {
                 it.copy(

@@ -20,8 +20,12 @@ import kotlinx.coroutines.launch
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class DownloadManagerEngine(
     private val context: Context,
@@ -110,6 +114,8 @@ class DownloadManagerEngine(
             fileName = guessedName,
             destinationPath = destFile.absolutePath,
             headers = target.headers,
+            megaKeyHex = target.megaKeyHex,
+            megaNonceHex = target.megaNonceHex,
             status = DownloadStatus.QUEUED
         )
 
@@ -141,7 +147,9 @@ class DownloadManagerEngine(
         val job = scope.launch {
             val task = _tasks.value.firstOrNull { it.id == taskId } ?: return@launch
             var destFile = File(task.destinationPath)
-            val existingBytes = if (destFile.exists()) destFile.length() else 0L
+            val isMega = !task.megaKeyHex.isNullOrBlank() && !task.megaNonceHex.isNullOrBlank()
+            val rawExisting = if (destFile.exists()) destFile.length() else 0L
+            val existingBytes = if (isMega) (rawExisting / 16L) * 16L else rawExisting
 
             updateTask(taskId) {
                 it.copy(
@@ -196,7 +204,7 @@ class DownloadManagerEngine(
                     }
 
                     // Update filename from Content-Disposition if available and starting fresh
-                    if (existingBytes == 0L) {
+                    if (existingBytes == 0L && !isMega) {
                         extractDispositionFileName(resp.header("Content-Disposition"))?.let { dispName ->
                             val cleanDisp = sanitizeFileName(dispName)
                             if (cleanDisp.isNotBlank() && DownloadAndSchemeGuard.inspectUrl("https://host/$cleanDisp") == DownloadAndSchemeGuard.UrlSafety.SAFE_HTTP_OR_HTTPS) {
@@ -223,33 +231,72 @@ class DownloadManagerEngine(
                         )
                     }
 
+                    val megaCipher: Cipher? = if (isMega) {
+                        val keyBytes = hexToBytes(task.megaKeyHex!!)
+                        val nonceBytes = hexToBytes(task.megaNonceHex!!)
+                        val iv = ByteArray(16)
+                        System.arraycopy(nonceBytes, 0, iv, 0, minOf(8, nonceBytes.size))
+                        var blockCounter = if (appendMode) existingBytes / 16L else 0L
+                        for (idx in 15 downTo 8) {
+                            iv[idx] = (blockCounter and 0xFFL).toByte()
+                            blockCounter = blockCounter ushr 8
+                        }
+                        Cipher.getInstance("AES/CTR/NoPadding").apply {
+                            init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
+                        }
+                    } else null
+
                     var written = if (appendMode) existingBytes else 0L
                     var lastTickMs = System.currentTimeMillis()
                     var bytesSinceTick = 0L
                     val buffer = ByteArray(64 * 1024)
 
-                    body.byteStream().use { input ->
-                        FileOutputStream(destFile, appendMode).use { fos ->
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read <= 0) break
-                                fos.write(buffer, 0, read)
-                                written += read
-                                bytesSinceTick += read
-
-                                val now = System.currentTimeMillis()
-                                val elapsed = now - lastTickMs
-                                if (elapsed >= 350L) {
-                                    val speed = (bytesSinceTick * 1000L) / elapsed.coerceAtLeast(1L)
-                                    updateTask(taskId) {
-                                        it.copy(
-                                            downloadedBytes = written,
-                                            speedBytesPerSec = speed
-                                        )
+                    if (appendMode) {
+                        body.byteStream().use { input ->
+                            RandomAccessFile(destFile, "rw").use { raf ->
+                                raf.seek(existingBytes)
+                                raf.setLength(existingBytes)
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read <= 0) break
+                                    val outBytes = megaCipher?.update(buffer, 0, read) ?: buffer
+                                    val outLen = if (megaCipher != null) outBytes.size else read
+                                    if (outLen > 0) raf.write(outBytes, 0, outLen)
+                                    written += read
+                                    bytesSinceTick += read
+                                    val now = System.currentTimeMillis()
+                                    val elapsed = now - lastTickMs
+                                    if (elapsed >= 350L) {
+                                        val speed = (bytesSinceTick * 1000L) / elapsed.coerceAtLeast(1L)
+                                        updateTask(taskId) { it.copy(downloadedBytes = written, speedBytesPerSec = speed) }
+                                        lastTickMs = now
+                                        bytesSinceTick = 0L
                                     }
-                                    lastTickMs = now
-                                    bytesSinceTick = 0L
                                 }
+                                megaCipher?.doFinal()?.takeIf { it.isNotEmpty() }?.let { raf.write(it) }
+                            }
+                        }
+                    } else {
+                        body.byteStream().use { input ->
+                            FileOutputStream(destFile, false).use { fos ->
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read <= 0) break
+                                    val outBytes = megaCipher?.update(buffer, 0, read) ?: buffer
+                                    val outLen = if (megaCipher != null) outBytes.size else read
+                                    if (outLen > 0) fos.write(outBytes, 0, outLen)
+                                    written += read
+                                    bytesSinceTick += read
+                                    val now = System.currentTimeMillis()
+                                    val elapsed = now - lastTickMs
+                                    if (elapsed >= 350L) {
+                                        val speed = (bytesSinceTick * 1000L) / elapsed.coerceAtLeast(1L)
+                                        updateTask(taskId) { it.copy(downloadedBytes = written, speedBytesPerSec = speed) }
+                                        lastTickMs = now
+                                        bytesSinceTick = 0L
+                                    }
+                                }
+                                megaCipher?.doFinal()?.takeIf { it.isNotEmpty() }?.let { fos.write(it) }
                             }
                         }
                     }
@@ -331,4 +378,13 @@ class DownloadManagerEngine(
         raw.replace(Regex("[\\\\/:*?\"<>|]+"), "_")
             .replace(Regex("\\s+"), " ")
             .trim()
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val clean = hex.trim()
+        val out = ByteArray(clean.length / 2)
+        for (i in out.indices) {
+            out[i] = clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        return out
+    }
 }

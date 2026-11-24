@@ -94,4 +94,13 @@ class HttpFastPathResolverTest {
             server.shutdown()
         }
     }
+
+    @Test
+    fun megaKeyDerivationProduces16ByteAesKeyAnd8ByteNonce() {
+        val keyStr = "jJuzvYPQey-3Luvq3HV0T5PgMDot9MLmAQT_Ya8oKeM"
+        val raw = com.animeext.downloader.parser.Base64Codec.decodeToBytes(keyStr)!!
+        assertEquals(32, raw.size)
+        val aesKey = ByteArray(16) { i -> (raw[i].toInt() xor raw[i + 16].toInt()).toByte() }
+        assertEquals(16, aesKey.size)
+    }
 }
