@@ -224,22 +224,23 @@ object WordPressStreamResolvers {
         if (mirrorsHtml.isBlank()) return false
 
         val mirrorsDoc = Jsoup.parse(mirrorsHtml, mirrorsUrl)
-        val getLinkUrls = mutableListOf<Pair<String, String>>()
+        val getLinkUrls = mutableListOf<Pair<Int, String>>()
         for (row in mirrorsDoc.select("tr")) {
-            val rowText = row.text().lowercase()
+            val rowHint = "${row.text()} ${row.html()}".lowercase()
             val link = row.selectFirst("a[href*=/getlink/]") ?: continue
             val resolved = WordPressSemanticParser.resolveUrl(link.attr("href"), mirrorsUrl) ?: continue
-            val hostPriority = mirroredSupportedHosts.indexOfFirst { rowText.contains(it) }
+            val hostPriority = mirroredSupportedHosts.indexOfFirst { rowHint.contains(it) }
             if (hostPriority >= 0) {
-                getLinkUrls.add(rowText to resolved)
+                getLinkUrls.add(hostPriority to resolved)
             }
         }
+        getLinkUrls.sortBy { it.first }
 
         // Fallback if table rows lacked host labels
         if (getLinkUrls.isEmpty()) {
             for (link in mirrorsDoc.select("a[href*=/getlink/]")) {
                 val resolved = WordPressSemanticParser.resolveUrl(link.attr("href"), mirrorsUrl) ?: continue
-                getLinkUrls.add("mirror" to resolved)
+                getLinkUrls.add(99 to resolved)
             }
         }
 

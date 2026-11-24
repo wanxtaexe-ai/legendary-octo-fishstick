@@ -1,4 +1,4 @@
-version = 3
+version = 4
 
 cloudstream {
     description = "Hindi Subbed Anime from Hindi Subbed Academy (hindisubbedacademy.com)"

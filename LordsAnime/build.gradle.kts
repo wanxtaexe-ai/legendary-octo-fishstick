@@ -1,4 +1,4 @@
-version = 3
+version = 4
 
 cloudstream {
     description = "Hindi Subbed Anime from Lord's Anime (lordsanime.com) with remote domains.json support"

@@ -1,4 +1,4 @@
-version = 3
+version = 4
 
 cloudstream {
     description = "Hindi Subbed Anime from YBX Anime (ybxanime.com) with remote domains.json support"
