@@ -282,8 +282,9 @@ object SemanticParser {
             val fullText = el.text().replace(Regex("\\s+"), " ").trim()
             if (fullText.isEmpty()) continue
 
-            seasonHeaderRegex.find(fullText)?.let {
-                currentSeason = it.groupValues[1].toIntOrNull() ?: currentSeason
+            val seasonMatch = seasonHeaderRegex.find(fullText)
+            if (seasonMatch != null) {
+                currentSeason = seasonMatch.groupValues[1].toIntOrNull() ?: currentSeason
                 continue
             }
 
