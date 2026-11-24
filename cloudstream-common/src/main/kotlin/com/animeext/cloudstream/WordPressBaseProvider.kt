@@ -27,6 +27,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
+import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
