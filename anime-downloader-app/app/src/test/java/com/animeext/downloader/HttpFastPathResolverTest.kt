@@ -103,4 +103,19 @@ class HttpFastPathResolverTest {
         val aesKey = ByteArray(16) { i -> (raw[i].toInt() xor raw[i + 16].toInt()).toByte() }
         assertEquals(16, aesKey.size)
     }
+
+    @Test
+    fun interactiveShortenersEscalateDirectlyToHardenedWebView() = runTest {
+        val net = NetworkClient().apply { dohEnabled = false }
+        val resolver = HttpFastPathResolver(net)
+        for (gate in listOf(
+            "https://shortsync.epdexx.com/go/abc123",
+            "https://srnky.com/EA7epdFz",
+            "https://hsalinks.eu.org/short.php?link=xyz",
+            "https://ybxanime.com/7k29m4n8q/?t=abc"
+        )) {
+            val res = resolver.resolve(gate, "https://www.lordsanime.com/")
+            assertTrue("Expected NeedsHardenedWebView for $gate, got $res", res is FastPathResult.NeedsHardenedWebView)
+        }
+    }
 }

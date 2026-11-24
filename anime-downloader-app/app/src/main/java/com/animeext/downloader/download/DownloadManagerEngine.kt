@@ -104,14 +104,14 @@ class DownloadManagerEngine(
         val seriesDir = File(rootDownloadDir(), safeSeries).apply { if (!exists()) mkdirs() }
 
         val guessedName = guessFileName(seriesTitle, episodeLabel, target)
-        val destFile = File(seriesDir, guessedName)
+        val destFile = uniqueDestFile(seriesDir, guessedName)
 
         val task = DownloadTask(
             id = UUID.randomUUID().toString(),
             seriesTitle = seriesTitle,
             episodeLabel = episodeLabel,
             url = target.url,
-            fileName = guessedName,
+            fileName = destFile.name,
             destinationPath = destFile.absolutePath,
             headers = target.headers,
             megaKeyHex = target.megaKeyHex,
@@ -120,8 +120,21 @@ class DownloadManagerEngine(
         )
 
         _tasks.update { listOf(task) + it }
-        startTask(task.id)
+        startTask(task.id, startFresh = true)
         return task
+    }
+
+    private fun uniqueDestFile(dir: File, fileName: String): File {
+        val candidate = File(dir, fileName)
+        if (!candidate.exists()) return candidate
+        val base = fileName.substringBeforeLast('.', fileName)
+        val ext = fileName.substringAfterLast('.', "")
+        for (i in 2..99) {
+            val numbered = if (ext.isNotEmpty()) "$base ($i).$ext" else "$base ($i)"
+            val f = File(dir, numbered)
+            if (!f.exists()) return f
+        }
+        return File(dir, "${base}_${System.currentTimeMillis()}.${ext.ifBlank { "mp4" }}")
     }
 
     fun pauseDownload(taskId: String) {
@@ -130,7 +143,7 @@ class DownloadManagerEngine(
     }
 
     fun resumeDownload(taskId: String) {
-        startTask(taskId)
+        startTask(taskId, startFresh = false)
     }
 
     fun cancelDownload(taskId: String) {
@@ -142,14 +155,14 @@ class DownloadManagerEngine(
         updateTask(taskId) { it.copy(status = DownloadStatus.CANCELLED, speedBytesPerSec = 0L) }
     }
 
-    private fun startTask(taskId: String) {
+    private fun startTask(taskId: String, startFresh: Boolean = false) {
         activeJobs[taskId]?.cancel()
         val job = scope.launch {
             val task = _tasks.value.firstOrNull { it.id == taskId } ?: return@launch
             var destFile = File(task.destinationPath)
             val isMega = !task.megaKeyHex.isNullOrBlank() && !task.megaNonceHex.isNullOrBlank()
-            val rawExisting = if (destFile.exists()) destFile.length() else 0L
-            val existingBytes = if (isMega) (rawExisting / 16L) * 16L else rawExisting
+            val rawExisting = if (!startFresh && destFile.exists()) destFile.length() else 0L
+            var existingBytes = if (isMega) (rawExisting / 16L) * 16L else rawExisting
 
             updateTask(taskId) {
                 it.copy(
@@ -160,27 +173,33 @@ class DownloadManagerEngine(
             }
 
             try {
-                val reqBuilder = Request.Builder().url(task.url)
-                for ((k, v) in task.headers) {
-                    reqBuilder.header(k, v)
-                }
-                if (existingBytes > 0L) {
-                    reqBuilder.header("Range", "bytes=$existingBytes-")
+                fun buildCall(rangeOffset: Long) = network.httpClient.newCall(
+                    Request.Builder().url(task.url).apply {
+                        for ((k, v) in task.headers) header(k, v)
+                        if (rangeOffset > 0L) header("Range", "bytes=$rangeOffset-")
+                    }.build()
+                )
+
+                var resp = buildCall(existingBytes).execute()
+                if (resp.code == 416 && existingBytes > 0L) {
+                    resp.close()
+                    existingBytes = 0L
+                    resp = buildCall(0L).execute()
                 }
 
-                network.httpClient.newCall(reqBuilder.build()).execute().use { resp ->
-                    if (!resp.isSuccessful && resp.code != 206) {
+                resp.use { activeResp ->
+                    if (!activeResp.isSuccessful && activeResp.code != 206) {
                         updateTask(taskId) {
                             it.copy(
                                 status = DownloadStatus.FAILED,
-                                errorMessage = "HTTP ${resp.code}",
+                                errorMessage = "HTTP ${activeResp.code}",
                                 speedBytesPerSec = 0L
                             )
                         }
                         return@launch
                     }
 
-                    val contentType = resp.header("Content-Type").orEmpty().lowercase()
+                    val contentType = activeResp.header("Content-Type").orEmpty().lowercase()
                     if (DownloadAndSchemeGuard.isBlockedMimeType(contentType)) {
                         updateTask(taskId) {
                             it.copy(
@@ -205,18 +224,18 @@ class DownloadManagerEngine(
 
                     // Update filename from Content-Disposition if available and starting fresh
                     if (existingBytes == 0L && !isMega) {
-                        extractDispositionFileName(resp.header("Content-Disposition"))?.let { dispName ->
+                        extractDispositionFileName(activeResp.header("Content-Disposition"))?.let { dispName ->
                             val cleanDisp = sanitizeFileName(dispName)
                             if (cleanDisp.isNotBlank() && DownloadAndSchemeGuard.inspectUrl("https://host/$cleanDisp") == DownloadAndSchemeGuard.UrlSafety.SAFE_HTTP_OR_HTTPS) {
-                                val renamed = File(destFile.parentFile, cleanDisp)
+                                val renamed = uniqueDestFile(destFile.parentFile ?: rootDownloadDir(), cleanDisp)
                                 destFile = renamed
-                                updateTask(taskId) { it.copy(fileName = cleanDisp, destinationPath = renamed.absolutePath) }
+                                updateTask(taskId) { it.copy(fileName = renamed.name, destinationPath = renamed.absolutePath) }
                             }
                         }
                     }
 
-                    val appendMode = resp.code == 206 && existingBytes > 0L
-                    val body = resp.body ?: throw IllegalStateException("Empty response body")
+                    val appendMode = activeResp.code == 206 && existingBytes > 0L
+                    val body = activeResp.body ?: throw IllegalStateException("Empty response body")
                     val contentLen = body.contentLength()
                     val totalBytes = when {
                         contentLen <= 0L -> -1L

@@ -80,8 +80,10 @@ object AdChainDomScripts {
       var anchors = document.querySelectorAll('a[href]');
       for (var k = 0; k < anchors.length; k++) {
         var txt = (anchors[k].innerText || '').trim().toLowerCase();
-        if ((txt === 'download file' || txt === 'download now' || txt === 'click here to continue') &&
-            anchors[k].href && /^https?:/i.test(anchors[k].href)) {
+        var href = (anchors[k].href || '').toLowerCase();
+        if (!txt || !/^https?:/i.test(href)) continue;
+        if (href.indexOf('tryedesign.') >= 0 || href.indexOf('rvpaste.') >= 0) continue;
+        if (txt === 'download file' || txt === 'download now' || txt === 'click here to continue') {
           nextAnchor = anchors[k];
           break;
         }
@@ -96,9 +98,33 @@ object AdChainDomScripts {
       return JSON.stringify({ stage: 'safelink_form' });
     }
 
-    var mediaEl = document.querySelector('video[src], video source[src]');
-    if (mediaEl && mediaEl.src && /^https?:/i.test(mediaEl.src)) {
-      return JSON.stringify({ stage: 'direct_media', url: mediaEl.src });
+    var isGateOrTutorialPage = !!(
+      goForm || tpForm || nextAnchor || hasTurnstile || hasRecaptcha || hasHcaptcha ||
+      document.querySelector('#nextPage, a.get-link, #btn-get-link, #get-link-btn') ||
+      html.indexOf('please wait') >= 0 ||
+      html.indexOf('how to download') >= 0 ||
+      html.indexOf('tutorial') >= 0 ||
+      html.indexOf('adblocker detected') >= 0
+    );
+
+    if (!isGateOrTutorialPage) {
+      var mediaEls = document.querySelectorAll('video[src], video source[src]');
+      for (var m = 0; m < mediaEls.length; m++) {
+        var mSrc = (mediaEls[m].src || '').trim();
+        var mLower = mSrc.toLowerCase();
+        if (!/^https?:/i.test(mSrc)) continue;
+        if (/\.webm(\?|$)/i.test(mLower)) continue;
+        if (mLower.indexOf('wp-content/uploads') >= 0 ||
+            mLower.indexOf('tutorial') >= 0 ||
+            mLower.indexOf('how-to') >= 0 ||
+            mLower.indexOf('howto') >= 0 ||
+            mLower.indexOf('promo') >= 0 ||
+            mLower.indexOf('trailer') >= 0 ||
+            mLower.indexOf('bumper') >= 0) {
+          continue;
+        }
+        return JSON.stringify({ stage: 'direct_media', url: mSrc });
+      }
     }
 
     return JSON.stringify({ stage: 'waiting' });
