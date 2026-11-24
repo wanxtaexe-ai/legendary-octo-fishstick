@@ -56,7 +56,12 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/src"
           chmod +x gradlew
-          ./gradlew make makePluginsJson
+          set -o pipefail
+          if ! ./gradlew make makePluginsJson --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gradle.log"; then
+            ERR_SUMMARY=$(grep -E "e: |ERROR:|FAILURE:|Exception:|What went wrong" -A 3 "$GITHUB_WORKSPACE/gradle.log" | tail -n 30 | tr '\n' ' ')
+            echo "::error::Gradle failed: ${ERR_SUMMARY:-$(tail -n 25 "$GITHUB_WORKSPACE/gradle.log" | tr '\n' ' ')}"
+            exit 1
+          fi
           cp */build/*.cs3 "$GITHUB_WORKSPACE/builds/"
           cp build/plugins.json "$GITHUB_WORKSPACE/builds/"
           cp repo.json "$GITHUB_WORKSPACE/builds/"

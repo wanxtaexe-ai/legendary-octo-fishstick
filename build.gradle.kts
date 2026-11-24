@@ -43,6 +43,10 @@ subprojects {
     android {
         namespace = "com.animeext.${project.name.lowercase()}"
 
+        sourceSets.getByName("main") {
+            java.srcDir(rootProject.file("cloudstream-common/src/main/kotlin"))
+        }
+
         defaultConfig {
             minSdk = 21
             compileSdkVersion(35)
