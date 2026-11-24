@@ -263,7 +263,8 @@ abstract class WordPressBaseProvider(
                 )
                 val (finalReq, extraReqs) = resolver.resolveUsingWebView(
                     url = targetUrl,
-                    referer = payload.referer
+                    referer = payload.referer,
+                    headers = emptyMap()
                 )
                 val candidates = (listOfNotNull(finalReq) + extraReqs).map { it.url.toString() }.distinct()
                 for (candidateUrl in candidates) {
