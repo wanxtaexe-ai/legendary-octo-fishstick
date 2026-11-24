@@ -140,9 +140,9 @@ jobs:
           set -e
           cat apk.log
           if [ "$STATUS" -ne 0 ]; then
-            ERR_SUMMARY=$(grep -E "e: |ERROR:|FAILED|Exception" apk.log | head -n 15 | tr '\n' ' ' || true)
+            ERR_SUMMARY=$(grep -n -E "^e: |^\* What went wrong:|> |FAILURE:|ERROR:|Exception|AssertionError" apk.log | head -n 25 | tr '\n' ' ' || true)
             if [ -z "$ERR_SUMMARY" ]; then
-              ERR_SUMMARY=$(tail -n 30 apk.log | tr '\n' ' ' || true)
+              ERR_SUMMARY=$(tail -n 35 apk.log | tr '\n' ' ' || true)
             fi
             echo "::error::APK build failed ($STATUS): $ERR_SUMMARY"
             exit "$STATUS"
