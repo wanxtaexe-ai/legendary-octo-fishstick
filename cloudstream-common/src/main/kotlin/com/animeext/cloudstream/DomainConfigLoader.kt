@@ -98,7 +98,7 @@ object DomainConfigLoader {
         val now = System.currentTimeMillis()
         val existing = cachedConfig
         if (existing != null && (now - lastFetchMs) < existing.cacheTtlSeconds * 1000L) {
-            return existing
+            return@withLock existing
         }
 
         val fetched = runCatching {
@@ -109,8 +109,8 @@ object DomainConfigLoader {
         if (fetched != null && fetched.sites.isNotEmpty()) {
             cachedConfig = fetched
             lastFetchMs = now
-            return fetched
+            return@withLock fetched
         }
-        return cachedConfig
+        cachedConfig
     }
 }
