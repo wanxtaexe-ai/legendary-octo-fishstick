@@ -8,7 +8,3 @@ cloudstream {
     language = "hi"
     iconUrl = "https://www.google.com/s2/favicons?domain=animevilla.org&sz=128"
 }
-
-android {
-    sourceSets["main"].kotlin.srcDir("../cloudstream-common/src/main/kotlin")
-}
