@@ -1,0 +1,8 @@
+{
+  "name": "Hindi Anime WordPress Extensions",
+  "description": "CloudStream 3 / Yumeiro repository for LordsAnime, TpXAnime, YBXAnime, HindiSubbedAcademy, and AnimeVilla with remote domains.json configuration.",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/plugins.json"
+  ]
+}

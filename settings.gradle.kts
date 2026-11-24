@@ -1,18 +1,14 @@
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
+rootProject.name = "CloudstreamPlugins"
+
+// Exclude non-CloudStream helper/test directories so only .cs3 plugin modules are built.
+val disabled = listOf("android-extension", "cloudstream-common", "js-extension", "gradle", "node_modules")
+
+File(rootDir, ".").eachDir { dir ->
+    if (!disabled.contains(dir.name) && File(dir, "build.gradle.kts").exists()) {
+        include(dir.name)
     }
 }
 
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
+fun File.eachDir(block: (File) -> Unit) {
+    listFiles()?.filter { it.isDirectory }?.forEach { block(it) }
 }
-
-rootProject.name = "wordpress-anime-extension"
-include(":android-extension")
