@@ -57,10 +57,18 @@ jobs:
           cd "$GITHUB_WORKSPACE/src"
           chmod +x gradlew
           set -o pipefail
-          if ! ./gradlew make makePluginsJson --no-daemon 2>&1 | tee "$GITHUB_WORKSPACE/gradle.log"; then
-            ERR_SUMMARY=$(grep -E "^e: " "$GITHUB_WORKSPACE/gradle.log" | head -n 15 | tr '\n' ' ')
-            echo "::error::Kotlin errors: ${ERR_SUMMARY:-$(tail -n 25 "$GITHUB_WORKSPACE/gradle.log" | tr '\n' ' ')}"
-            exit 1
+          set +e
+          ./gradlew make makePluginsJson --no-daemon > "$GITHUB_WORKSPACE/gradle.log" 2>&1
+          STATUS=$?
+          set -e
+          cat "$GITHUB_WORKSPACE/gradle.log"
+          if [ "$STATUS" -ne 0 ]; then
+            ERR_SUMMARY=$(grep -E "e: " "$GITHUB_WORKSPACE/gradle.log" | head -n 15 | tr '\n' ' ' || true)
+            if [ -z "$ERR_SUMMARY" ]; then
+              ERR_SUMMARY=$(tail -n 30 "$GITHUB_WORKSPACE/gradle.log" | tr '\n' ' ' || true)
+            fi
+            echo "::error::Gradle failed ($STATUS): $ERR_SUMMARY"
+            exit "$STATUS"
           fi
           cp */build/*.cs3 "$GITHUB_WORKSPACE/builds/"
           cp build/plugins.json "$GITHUB_WORKSPACE/builds/"
