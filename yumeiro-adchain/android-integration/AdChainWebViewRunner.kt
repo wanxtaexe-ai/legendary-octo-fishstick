@@ -2,9 +2,11 @@ package dev.asfakul.yumeiro.adchain.android
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -23,7 +25,11 @@ import dev.asfakul.yumeiro.adchain.ValidatedDestination
 import dev.asfakul.yumeiro.adchain.WebViewChainDriver
 import dev.asfakul.yumeiro.adchain.WebViewChainOutcome
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -34,17 +40,18 @@ import java.io.ByteArrayInputStream
  * Production Android WebView + minimal-interruption human-gate driver for Yumeiro.
  *
  * Bridges directly into Yumeiro's existing primitives:
- * - `SafeWebView.harden` (blocks `file://`, `content://`, disables `X-Requested-With`, catches `onRenderProcessGone`)
+ * - Hardens WebView (`allowFileAccess = false`, `allowContentAccess = false`,
+ *   `X-Requested-With` stripped, `onRenderProcessGone` crash guard)
  * - `AdFilterPolicy` (blocks ad networks without breaking Turnstile/reCAPTCHA/hCaptcha or first-party `/links/go`)
  * - Bidirectional `CookieManager` <-> `InMemorySessionCookieJar` synchronization (`flush()` before handing off)
  * - Minimal-interruption human verification callback: keeps the live WebView session intact and surfaces
- *   it to `BrowserCheckHost` only when `human_challenge` appears, resuming automatically once cleared.
+ *   it to `AdChainGateHost` only when `human_challenge` appears, resuming automatically once cleared.
  */
 class AdChainWebViewRunner(
     private val context: Context,
     private val userAgent: String,
     private val humanGatePresenter: suspend (webView: WebView, gateUrl: String, kind: HumanChallengeKind?) -> Boolean,
-    private val timeoutMs: Long = 35_000L
+    private val timeoutMs: Long = 45_000L
 ) : WebViewChainDriver {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -56,13 +63,14 @@ class AdChainWebViewRunner(
         cookieJar: InMemorySessionCookieJar
     ): WebViewChainOutcome = withContext(Dispatchers.Main) {
         val result = CompletableDeferred<WebViewChainOutcome>()
+        val gateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val cm = CookieManager.getInstance()
         val web = WebView(context.applicationContext)
+        web.settings.allowFileAccess = false
+        web.settings.allowContentAccess = false
 
         try {
             web.settings.apply {
-                allowFileAccess = false
-                allowContentAccess = false
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 javaScriptCanOpenWindowsAutomatically = false
@@ -83,9 +91,9 @@ class AdChainWebViewRunner(
                 WebViewCompat.addDocumentStartJavaScript(web, AdChainDomScripts.DOCUMENT_START_JS, setOf("*"))
             }
 
-            // Capture browser-initiated file downloads (e.g. direct attachment redirect)
+            // Capture browser-initiated file downloads (skipping blob:/data: which media players cannot fetch)
             web.setDownloadListener { url, _, _, _, _ ->
-                if (!result.isCompleted && url.startsWith("http", ignoreCase = true)) {
+                if (!result.isCompleted && url != null && url.startsWith("http", ignoreCase = true)) {
                     finishWithDestination(url, web.url ?: startUrl, cm, cookieJar, userAgent, result)
                 }
             }
@@ -134,14 +142,13 @@ class AdChainWebViewRunner(
                         "human_challenge" -> {
                             if (!humanPromptShown) {
                                 humanPromptShown = true
-                                mainHandler.post {
-                                    // Hand live WebView to BrowserCheckHost without losing state;
-                                    // caller suspends on user completion or cancellation.
-                                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
-                                        val completed = humanGatePresenter(web, currentUrl, null)
-                                        if (!completed && !result.isCompleted) {
-                                            result.complete(WebViewChainOutcome.HumanVerificationCancelled(currentUrl, null))
-                                        }
+                                val kind = parseChallengeKind(stageObj.optString("kind"))
+                                gateScope.launch {
+                                    val completed = humanGatePresenter(web, currentUrl, kind)
+                                    if (!completed && !result.isCompleted) {
+                                        result.complete(WebViewChainOutcome.HumanVerificationCancelled(currentUrl, kind))
+                                    } else if (completed && !result.isCompleted) {
+                                        pollDomStage()
                                     }
                                 }
                             }
@@ -158,6 +165,14 @@ class AdChainWebViewRunner(
             }
 
             web.webViewClient = object : WebViewClient() {
+                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                    if (!result.isCompleted) {
+                        val crashed = if (Build.VERSION.SDK_INT >= 26) detail?.didCrash() == true else false
+                        result.complete(WebViewChainOutcome.Failed(view?.url ?: startUrl, "renderer_gone:$crashed"))
+                    }
+                    return true
+                }
+
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     val req = request ?: return null
                     val url = req.url?.toString() ?: return null
@@ -215,10 +230,19 @@ class AdChainWebViewRunner(
             withTimeoutOrNull(timeoutMs) { result.await() }
                 ?: WebViewChainOutcome.Failed(web.url ?: startUrl, "webview_timeout")
         } finally {
+            gateScope.cancel()
             runCatching { cm.flush() }
+            runCatching { (web.parent as? android.view.ViewGroup)?.removeView(web) }
             runCatching { web.stopLoading() }
             runCatching { web.destroy() }
         }
+    }
+
+    private fun parseChallengeKind(raw: String): HumanChallengeKind? = when (raw.lowercase()) {
+        "cf_turnstile" -> HumanChallengeKind.CLOUDFLARE_TURNSTILE
+        "recaptcha" -> HumanChallengeKind.RECAPTCHA
+        "hcaptcha" -> HumanChallengeKind.HCAPTCHA
+        else -> null
     }
 
     private fun refererHeader(referer: String?): MutableMap<String, String> {
