@@ -261,6 +261,15 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             }
         }
 
+        // 7b. GDIndex (/0:/) directory or file (used by LordsAnime LAS links)
+        if (lower.contains("/0:/") || lower.contains("/1:/")) {
+            trace.add("Querying Drive Index (/0:/)...")
+            val gdTargets = resolveGdIndex(url, referer, trace)
+            if (gdTargets.isNotEmpty()) {
+                return FastPathResult.Resolved(gdTargets, trace)
+            }
+        }
+
         // 8. Kiranime /watch/ page
         if (lower.contains("/watch/")) {
             trace.add("Inspecting watch page embeds...")
@@ -350,7 +359,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
                 }
             }
 
-            extractFromKnownHost(landed, referer, trace, true)?.let { return it }
+            extractFromKnownHost(landed, effectiveReferer, trace, true)?.let { return it }
 
             val body = resp.body
             val trimmed = body.trimStart()
@@ -374,7 +383,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
                 ?: if (isCfIuam) "cloudflare_challenge" else null
             if (challenge != null) {
                 trace.add("Human challenge ($challenge) -> opening hardened gate sandbox")
-                return FastPathResult.NeedsHardenedWebView(landed, referer, trace, "human_challenge:$challenge")
+                return FastPathResult.NeedsHardenedWebView(landed, effectiveReferer, trace, "human_challenge:$challenge")
             }
 
             if (lower.contains("too early") && retries < 1 && lastDelaySec in 1..15) {
@@ -1006,6 +1015,60 @@ class HttpFastPathResolver(private val network: NetworkClient) {
         if (!dlUrl.startsWith("http")) return null
         trace.add("KrakenFiles resolved -> ${summarizeUrl(dlUrl)}")
         return buildResolvedTarget(dlUrl, resp.url, trace = trace)
+    }
+
+    private suspend fun resolveGdIndex(
+        url: String,
+        referer: String?,
+        trace: MutableList<String>
+    ): List<ResolvedTarget> {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return emptyList()
+        val origin = "${uri.scheme}://${uri.authority}"
+        val folderUrl = if (url.endsWith("/")) url else "$url/"
+        val resp = runCatching {
+            network.postJson(
+                url = folderUrl,
+                jsonBody = """{"password":"","page_token":null,"page_index":0}""",
+                referer = referer ?: url,
+                headers = mapOf("Origin" to origin, "X-Requested-With" to "XMLHttpRequest")
+            )
+        }.getOrNull() ?: return emptyList()
+
+        val raw = resp.body.trim()
+        val jsonObj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: decodeGdIndexPayload(raw)
+            ?: return emptyList()
+
+        val files = jsonObj.optJSONObject("data")?.optJSONArray("files") ?: return emptyList()
+        val out = mutableListOf<ResolvedTarget>()
+        for (i in 0 until files.length()) {
+            val f = files.optJSONObject(i) ?: continue
+            val name = f.optString("name", "").trim()
+            val mime = f.optString("mimeType", "").lowercase()
+            if (name.isBlank() || mime.contains("folder")) continue
+            val encodedName = URLEncoder.encode(name, StandardCharsets.UTF_8.name()).replace("+", "%20")
+            val fileUrl = "$folderUrl$encodedName"
+            if (DownloadAndSchemeGuard.inspectUrl(fileUrl) == DownloadAndSchemeGuard.UrlSafety.SAFE_HTTP_OR_HTTPS) {
+                trace.add("Index file -> $name")
+                out.add(buildResolvedTarget(fileUrl, folderUrl, fileNameHint = name, trace = trace))
+            }
+        }
+        return out
+    }
+
+    private fun decodeGdIndexPayload(raw: String): JSONObject? {
+        if (raw.length < 10) return null
+        val candidates = listOf(
+            raw,
+            raw.reversed(),
+            if (raw.length > 48) raw.drop(24).dropLast(24).reversed() else raw
+        )
+        for (c in candidates) {
+            val decoded = Base64Codec.decodeToUtf8(c) ?: continue
+            val obj = runCatching { JSONObject(decoded) }.getOrNull()
+            if (obj != null && obj.has("data")) return obj
+        }
+        return null
     }
 
     private fun summarizeUrl(url: String): String {
