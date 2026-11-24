@@ -57,9 +57,9 @@ jobs:
           cd "$GITHUB_WORKSPACE/src"
           chmod +x gradlew
           set -o pipefail
-          if ! ./gradlew make makePluginsJson --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gradle.log"; then
-            ERR_SUMMARY=$(grep -E "e: |ERROR:|FAILURE:|Exception:|What went wrong" -A 3 "$GITHUB_WORKSPACE/gradle.log" | tail -n 30 | tr '\n' ' ')
-            echo "::error::Gradle failed: ${ERR_SUMMARY:-$(tail -n 25 "$GITHUB_WORKSPACE/gradle.log" | tr '\n' ' ')}"
+          if ! ./gradlew make makePluginsJson --no-daemon 2>&1 | tee "$GITHUB_WORKSPACE/gradle.log"; then
+            ERR_SUMMARY=$(grep -E "^e: " "$GITHUB_WORKSPACE/gradle.log" | head -n 15 | tr '\n' ' ')
+            echo "::error::Kotlin errors: ${ERR_SUMMARY:-$(tail -n 25 "$GITHUB_WORKSPACE/gradle.log" | tr '\n' ' ')}"
             exit 1
           fi
           cp */build/*.cs3 "$GITHUB_WORKSPACE/builds/"
