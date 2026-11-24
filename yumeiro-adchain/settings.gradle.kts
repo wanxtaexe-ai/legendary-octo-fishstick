@@ -1,0 +1,1 @@
+rootProject.name = "yumeiro-adchain"

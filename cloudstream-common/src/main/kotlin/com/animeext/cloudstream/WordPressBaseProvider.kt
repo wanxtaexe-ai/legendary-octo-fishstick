@@ -26,7 +26,6 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONArray
 import org.json.JSONObject
-import org.jsoup.Jsoup
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -270,6 +269,87 @@ abstract class WordPressBaseProvider(
         }
     }
 
+    private suspend fun emitDirectOrExtractor(
+        resolvedUrl: String,
+        referer: String,
+        hostLabel: String,
+        qualityLabel: String,
+        qualityValue: Int,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        if (resolvedUrl.isBlank() || WordPressStreamResolvers.isKnownDeadUrl(resolvedUrl)) {
+            return false
+        }
+        val pd = WordPressSemanticParser.normalizePixeldrainUrl(resolvedUrl)
+        if (pd != null) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name Pixeldrain ($qualityLabel)",
+                    url = pd,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = resolvedUrl
+                    this.quality = qualityValue
+                }
+            )
+            return true
+        }
+        if (WordPressSemanticParser.isDirectVideoUrl(resolvedUrl)) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name $hostLabel ($qualityLabel)",
+                    url = resolvedUrl,
+                    type = if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
+                        ExtractorLinkType.M3U8
+                    } else {
+                        ExtractorLinkType.VIDEO
+                    }
+                ) {
+                    this.referer = referer
+                    this.quality = qualityValue
+                }
+            )
+            return true
+        }
+        if (WordPressStreamResolvers.extractHsaStreamId(resolvedUrl) != null) {
+            val host = runCatching { URI(referer).host }.getOrNull() ?: "animevilla.org"
+            if (WordPressStreamResolvers.resolveHsaStream(resolvedUrl, name, host, callback)) {
+                return true
+            }
+        }
+        if (resolvedUrl.contains("mirrored.to/files/", ignoreCase = true)) {
+            if (WordPressStreamResolvers.resolveMirroredTo(
+                    mirroredUrl = resolvedUrl,
+                    sourceName = name,
+                    qualityLabel = qualityLabel,
+                    qualityValue = qualityValue,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+            ) {
+                return true
+            }
+        }
+        if (resolvedUrl.contains("tpxbeta.", ignoreCase = true) ||
+            resolvedUrl.contains("beta.tpxsub.", ignoreCase = true)
+        ) {
+            if (WordPressStreamResolvers.resolveTpxPlayerPage(
+                    playerUrl = resolvedUrl,
+                    sourceName = name,
+                    referer = referer,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+            ) {
+                return true
+            }
+        }
+        return loadExtractor(resolvedUrl, referer, subtitleCallback, callback)
+    }
+
     private suspend fun resolveSingleTarget(
         targetUrl: String,
         referer: String,
@@ -283,155 +363,45 @@ abstract class WordPressBaseProvider(
             return false
         }
 
-        // Offline decoder for links.tpxsub.com/redirect/main2.php?url=...
-        val effectiveUrl = WordPressStreamResolvers.decodeTpxRedirectUrl(targetUrl)
-            ?: WordPressStreamResolvers.decodeBase64QueryUrl(targetUrl)
-            ?: targetUrl
-
+        // Offline decoder for links.tpxsub.com / token query wrappers
+        val effectiveUrl = AdChainHttpResolver.unwrapTokenUrl(targetUrl) ?: targetUrl
         if (WordPressStreamResolvers.isKnownDeadUrl(effectiveUrl)) {
             return false
         }
 
-        // Direct Pixeldrain normalization
-        val pixeldrainDirect = WordPressSemanticParser.normalizePixeldrainUrl(effectiveUrl)
-        if (pixeldrainDirect != null) {
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "$name Pixeldrain ($qualityLabel)",
-                    url = pixeldrainDirect,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = effectiveUrl
-                    this.quality = qualityValue
-                }
+        if (emitDirectOrExtractor(
+                resolvedUrl = effectiveUrl,
+                referer = referer,
+                hostLabel = hostLabel,
+                qualityLabel = qualityLabel,
+                qualityValue = qualityValue,
+                subtitleCallback = subtitleCallback,
+                callback = callback
             )
-            return true
-        }
-
-        // Direct .mp4 / .m3u8
-        if (WordPressSemanticParser.isDirectVideoUrl(effectiveUrl)) {
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "$name $hostLabel ($qualityLabel)",
-                    url = effectiveUrl,
-                    type = if (effectiveUrl.contains(".m3u8", ignoreCase = true)) {
-                        ExtractorLinkType.M3U8
-                    } else {
-                        ExtractorLinkType.VIDEO
-                    }
-                ) {
-                    this.referer = referer
-                    this.quality = qualityValue
-                }
-            )
-            return true
-        }
-
-        // HSAStream AES-128-CBC extractor (AnimeVilla)
-        if (WordPressStreamResolvers.extractHsaStreamId(effectiveUrl) != null) {
-            val host = runCatching { URI(referer).host }.getOrNull() ?: "animevilla.org"
-            if (WordPressStreamResolvers.resolveHsaStream(effectiveUrl, name, host, callback)) {
-                return true
-            }
-        }
-
-        // Mirrored.to pure-HTTP resolver (TpXAnime -> StreamTape / KrakenFiles / GoFile / Pixeldrain)
-        if (effectiveUrl.contains("mirrored.to/files/", ignoreCase = true)) {
-            if (WordPressStreamResolvers.resolveMirroredTo(
-                    mirroredUrl = effectiveUrl,
-                    sourceName = name,
-                    qualityLabel = qualityLabel,
-                    qualityValue = qualityValue,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-            ) {
-                return true
-            }
-        }
-
-        // TpXAnime intermediate player pages (beta.tpxsub.com / tpxbeta.xyz)
-        if (effectiveUrl.contains("tpxbeta.", ignoreCase = true) ||
-            effectiveUrl.contains("beta.tpxsub.", ignoreCase = true)
         ) {
-            if (WordPressStreamResolvers.resolveTpxPlayerPage(
-                    playerUrl = effectiveUrl,
-                    sourceName = name,
-                    referer = referer,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-            ) {
-                return true
-            }
-        }
-
-        // Built-in CloudStream extractors (Gofile, StreamTape, KrakenFiles, MediaFire, Mega, etc.)
-        if (loadExtractor(effectiveUrl, referer, subtitleCallback, callback)) {
             return true
         }
 
-        // Lightweight HTTP redirect / embed check before falling back to WebView
-        val httpResolved = runCatching {
-            val resp = app.get(effectiveUrl, referer = referer)
-            val finalUrl = resp.url
-            if (WordPressStreamResolvers.isKnownDeadUrl(finalUrl)) {
-                return@runCatching false
-            }
-            if (finalUrl != effectiveUrl) {
-                val pdFinal = WordPressSemanticParser.normalizePixeldrainUrl(finalUrl)
-                if (pdFinal != null) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name Pixeldrain ($qualityLabel)",
-                            url = pdFinal,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = finalUrl
-                            this.quality = qualityValue
-                        }
+        // Provider-agnostic multi-hop HTTP ad-chain resolver (WP Safelink, AdLinkFly /links/go, meta/JS redirects)
+        return when (val chain = AdChainHttpResolver.resolve(effectiveUrl, referer)) {
+            is AdChainResult.Resolved -> {
+                if (chain.url != effectiveUrl) {
+                    emitDirectOrExtractor(
+                        resolvedUrl = chain.url,
+                        referer = chain.referer,
+                        hostLabel = hostLabel,
+                        qualityLabel = qualityLabel,
+                        qualityValue = qualityValue,
+                        subtitleCallback = subtitleCallback,
+                        callback = callback
                     )
-                    return@runCatching true
-                }
-                if (WordPressSemanticParser.isDirectVideoUrl(finalUrl)) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name $hostLabel ($qualityLabel)",
-                            url = finalUrl,
-                            type = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
-                                ExtractorLinkType.M3U8
-                            } else {
-                                ExtractorLinkType.VIDEO
-                            }
-                        ) {
-                            this.referer = referer
-                            this.quality = qualityValue
-                        }
-                    )
-                    return@runCatching true
-                }
-                if (loadExtractor(finalUrl, effectiveUrl, subtitleCallback, callback)) {
-                    return@runCatching true
+                } else {
+                    false
                 }
             }
-            val metaRefresh = Jsoup.parse(resp.text, finalUrl)
-                .selectFirst("meta[http-equiv~=refresh i]")
-                ?.attr("content")
-                ?.let { Regex("url\\s*=\\s*['\"]?([^'\";\\s]+)", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
-                ?.let { WordPressSemanticParser.resolveUrl(it, finalUrl) }
-            if (!metaRefresh.isNullOrBlank() && !WordPressStreamResolvers.isKnownDeadUrl(metaRefresh)) {
-                if (loadExtractor(metaRefresh, finalUrl, subtitleCallback, callback)) {
-                    return@runCatching true
-                }
-            }
-            false
-        }.getOrDefault(false)
-
-        return httpResolved
+            is AdChainResult.HumanGateRequired,
+            is AdChainResult.DeadOrBlocked -> false
+        }
     }
 
     override suspend fun loadLinks(

@@ -1,4 +1,4 @@
-version = 2
+version = 3
 
 cloudstream {
     description = "Hindi Subbed Anime from TpXAnime (tpxsub.com) with 480p/720p/1080p stream support"

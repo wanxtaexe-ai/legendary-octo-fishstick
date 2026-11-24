@@ -82,3 +82,32 @@ jobs:
           git add .
           git commit -m "Build $GITHUB_SHA" || exit 0
           git push --force origin builds
+
+  test-adchain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Test Yumeiro Ad-Chain Resolver
+        run: |
+          chmod +x gradlew
+          set +e
+          ./gradlew -p yumeiro-adchain test --no-daemon > adchain.log 2>&1
+          STATUS=$?
+          set -e
+          cat adchain.log
+          if [ "$STATUS" -ne 0 ]; then
+            ERR_SUMMARY=$(grep -E "e: |FAILED|Assertion" adchain.log | head -n 15 | tr '\n' ' ' || true)
+            if [ -z "$ERR_SUMMARY" ]; then
+              ERR_SUMMARY=$(tail -n 30 adchain.log | tr '\n' ' ' || true)
+            fi
+            echo "::error::AdChain tests failed ($STATUS): $ERR_SUMMARY"
+            exit "$STATUS"
+          fi

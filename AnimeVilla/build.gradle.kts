@@ -1,4 +1,4 @@
-version = 2
+version = 3
 
 cloudstream {
     description = "Hindi Dubbed Anime & Embedded HLS Streams from AnimeVilla (animevilla.org)"
