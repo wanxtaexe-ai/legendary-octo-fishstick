@@ -186,8 +186,8 @@ object WordPressSemanticParser {
             }
         }
 
-        // Strategy 3: Kiranime /anime/ cards
-        if (items.isEmpty()) {
+        // Strategy 3: Kiranime /anime/ cards (always run if Strategy 1/2 found fewer than 3 cards)
+        if (items.size < 3) {
             for (a in doc.select("a[href*=/anime/]")) {
                 val url = resolveUrl(a.attr("href"), baseUrl) ?: continue
                 val container = a.parents().firstOrNull { it.tagName() in setOf("article", "li", "div") }
@@ -404,11 +404,14 @@ object WordPressSemanticParser {
             .filter { it.value.isNotEmpty() }
             .map { (key, streams) ->
                 val (label, num, season) = episodeMeta.getValue(key)
+                // Prioritize non-Telegram download links ahead of Telegram links (e.g. YBX LINK before Telegram)
+                val nonTelegram = streams.filterNot { it.hostLabel.equals("telegram", ignoreCase = true) }
+                val ordered = if (nonTelegram.isNotEmpty()) nonTelegram else streams
                 ParsedEpisodeBlock(
                     episodeLabel = label,
                     episodeNumber = num,
                     season = season,
-                    streams = streams
+                    streams = ordered
                 )
             }
     }
@@ -433,6 +436,20 @@ object WordPressSemanticParser {
             )
         }
 
+        fun addIframeCandidate(raw: String?) {
+            val trimmed = raw?.trim().orEmpty()
+                .replace("\\/", "/")
+                .replace("&amp;", "&")
+            if (trimmed.isBlank()) return
+            val resolved = resolveUrl(trimmed, baseUrl) ?: return
+            if (Regex("youtube\\.com|youtu\\.be|facebook\\.com|disqus\\.com|recaptcha", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(resolved)
+            ) {
+                return
+            }
+            if (!iframes.contains(resolved)) iframes.add(resolved)
+        }
+
         for (video in doc.select("video")) {
             addMedia(video.attr("src"), video.attr("data-quality").ifBlank { video.attr("title") })
             for (src in video.select("source")) {
@@ -440,34 +457,35 @@ object WordPressSemanticParser {
             }
         }
 
-        for (frame in doc.select("iframe[src], iframe[data-src]")) {
-            val resolved = resolveUrl(frame.attr("src").ifBlank { frame.attr("data-src") }, baseUrl) ?: continue
-            if (Regex("youtube\\.com|youtu\\.be|facebook\\.com|disqus\\.com|recaptcha", RegexOption.IGNORE_CASE)
-                    .containsMatchIn(resolved)
-            ) {
-                continue
-            }
-            if (!iframes.contains(resolved)) iframes.add(resolved)
+        for (frame in doc.select("iframe[src], iframe[data-src], [data-video], [data-url]")) {
+            val rawSrc = frame.attr("src")
+                .ifBlank { frame.attr("data-src") }
+                .ifBlank { frame.attr("data-video") }
+                .ifBlank { frame.attr("data-url") }
+            addIframeCandidate(rawSrc)
         }
 
         // Kiranime / AnimeVilla base64-encoded embed attributes (`data-embed-id`)
         for (el in doc.select("[data-embed-id]")) {
-            val b64 = el.attr("data-embed-id").trim()
-            if (b64.isBlank()) continue
+            val rawB64 = el.attr("data-embed-id").trim()
+            if (rawB64.isBlank()) continue
+            val normalized = rawB64.replace('-', '+').replace('_', '/')
+            val padded = normalized + "=".repeat((4 - normalized.length % 4) % 4)
             val decoded = runCatching {
-                String(Base64.decode(b64, Base64.DEFAULT), StandardCharsets.UTF_8).trim()
+                String(Base64.decode(padded, Base64.DEFAULT), StandardCharsets.UTF_8).trim()
             }.getOrNull() ?: continue
-            val urlMatch = Regex("https?://[^\\s\"'<>]+").find(decoded)?.value ?: continue
-            if (!iframes.contains(urlMatch)) iframes.add(urlMatch)
+            val cleaned = decoded.replace("\\/", "/").replace("&amp;", "&")
+            Regex("(?:https?:)?//[^\\s\"'<>]+").findAll(cleaned).forEach { match ->
+                addIframeCandidate(match.value)
+            }
         }
 
-        val hsaStreamRegex = Regex(
-            "https?://hsastream\\.[^\\s\"'<>\\\\]+",
+        val knownPlayerRegex = Regex(
+            "https?://(?:[a-z0-9-]+\\.)?(?:hsastream|rpmhub|rpmstream|rpmshare|upns|uns\\.bio|p2pplay|vidstack|strp2p|abyssplayer|abysscdn|playhydrax|streamhg|vidhide)\\.[^\\s\"'<>\\\\]+",
             RegexOption.IGNORE_CASE
         )
-        hsaStreamRegex.findAll(html).forEach { match ->
-            val url = match.value.trimEnd(',', ';', ')')
-            if (!iframes.contains(url)) iframes.add(url)
+        knownPlayerRegex.findAll(html.replace("\\/", "/")).forEach { match ->
+            addIframeCandidate(match.value.trimEnd(',', ';', ')'))
         }
 
         val keyedQualityRegex = Regex(

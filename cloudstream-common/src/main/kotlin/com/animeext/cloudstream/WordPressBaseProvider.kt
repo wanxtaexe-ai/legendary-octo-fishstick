@@ -26,7 +26,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URI
+import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
@@ -134,19 +134,57 @@ abstract class WordPressBaseProvider(
         return newHomePageResponse(request, items, hasNext)
     }
 
+    private enum class TargetOutcome {
+        RESOLVED,
+        SKIP_WEBVIEW,
+        TRY_WEBVIEW
+    }
+
+    private suspend fun searchWpJson(baseUrl: String, endpointType: String, encodedQuery: String): List<ParsedCard> {
+        val apiUrl = "$baseUrl/wp-json/wp/v2/$endpointType?search=$encodedQuery&_embed=wp:featuredmedia&per_page=20"
+        val body = runCatching { app.get(apiUrl).text.trim() }.getOrNull().orEmpty()
+        if (!body.startsWith("[")) return emptyList()
+        return runCatching {
+            val arr = JSONArray(body)
+            val cards = mutableListOf<ParsedCard>()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val link = item.optString("link", "").trim()
+                val rawTitle = item.optJSONObject("title")?.optString("rendered", "").orEmpty()
+                val title = Jsoup.parse(rawTitle).text().replace(Regex("\\s+"), " ").trim()
+                if (link.isBlank() || title.isBlank()) continue
+                val poster = item.optJSONObject("_embedded")
+                    ?.optJSONArray("wp:featuredmedia")
+                    ?.optJSONObject(0)
+                    ?.optString("source_url", "")
+                    ?.takeIf { it.startsWith("http") }
+                cards.add(ParsedCard(title = title, url = link, posterUrl = poster))
+            }
+            cards
+        }.getOrDefault(emptyList())
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
         val cfg = refreshBaseUrl()
         val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name()).replace("+", "%20")
 
-        val primaryTemplate = cfg.searchPath.replace("{query}", encoded)
-            .let { if (it.startsWith("/")) it else "/$it" }
-        val primaryUrl = "$mainUrl$primaryTemplate"
+        val isKiranime = cfg.theme.equals("kiranime", ignoreCase = true) || cfg.supportsEmbeddedPlayer
+        var cards = if (isKiranime) {
+            searchWpJson(mainUrl, "anime", encoded)
+        } else {
+            emptyList()
+        }
 
-        var cards = runCatching {
-            val html = app.get(primaryUrl).text
-            WordPressSemanticParser.parseCatalogCards(html, primaryUrl)
-        }.getOrDefault(emptyList())
+        if (cards.isEmpty()) {
+            val primaryTemplate = cfg.searchPath.replace("{query}", encoded)
+                .let { if (it.startsWith("/")) it else "/$it" }
+            val primaryUrl = "$mainUrl$primaryTemplate"
+            cards = runCatching {
+                val html = app.get(primaryUrl).text
+                WordPressSemanticParser.parseCatalogCards(html, primaryUrl)
+            }.getOrDefault(emptyList())
+        }
 
         val fallback = cfg.fallbackSearchPath
         if (cards.isEmpty() && !fallback.isNullOrBlank() && fallback != cfg.searchPath) {
@@ -157,6 +195,10 @@ abstract class WordPressBaseProvider(
                 val html = app.get(fallbackUrl).text
                 WordPressSemanticParser.parseCatalogCards(html, fallbackUrl)
             }.getOrDefault(emptyList())
+        }
+
+        if (cards.isEmpty() && !isKiranime) {
+            cards = searchWpJson(mainUrl, "posts", encoded)
         }
 
         return cards.map { card ->
@@ -333,6 +375,11 @@ abstract class WordPressBaseProvider(
                 return true
             }
         }
+        if (WordPressStreamResolvers.isAbyssHost(resolvedUrl)) {
+            if (WordPressStreamResolvers.resolveAbyssPlayer(resolvedUrl, name, referer, callback)) {
+                return true
+            }
+        }
         if (resolvedUrl.contains("tpxbeta.", ignoreCase = true) ||
             resolvedUrl.contains("beta.tpxsub.", ignoreCase = true)
         ) {
@@ -347,7 +394,17 @@ abstract class WordPressBaseProvider(
                 return true
             }
         }
-        return loadExtractor(resolvedUrl, referer, subtitleCallback, callback)
+        if (loadExtractor(resolvedUrl, referer, subtitleCallback, callback)) {
+            return true
+        }
+        return WordPressStreamResolvers.resolveStreamTapeFallback(
+            url = resolvedUrl,
+            sourceName = name,
+            qualityLabel = qualityLabel,
+            qualityValue = qualityValue,
+            subtitleCallback = subtitleCallback,
+            callback = callback
+        )
     }
 
     private suspend fun resolveSingleTarget(
@@ -358,15 +415,15 @@ abstract class WordPressBaseProvider(
         qualityValue: Int,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ): TargetOutcome {
         if (targetUrl.isBlank() || WordPressStreamResolvers.isKnownDeadUrl(targetUrl)) {
-            return false
+            return TargetOutcome.SKIP_WEBVIEW
         }
 
         // Offline decoder for links.tpxsub.com / token query wrappers
         val effectiveUrl = AdChainHttpResolver.unwrapTokenUrl(targetUrl) ?: targetUrl
         if (WordPressStreamResolvers.isKnownDeadUrl(effectiveUrl)) {
-            return false
+            return TargetOutcome.SKIP_WEBVIEW
         }
 
         if (emitDirectOrExtractor(
@@ -379,13 +436,13 @@ abstract class WordPressBaseProvider(
                 callback = callback
             )
         ) {
-            return true
+            return TargetOutcome.RESOLVED
         }
 
         // Provider-agnostic multi-hop HTTP ad-chain resolver (WP Safelink, AdLinkFly /links/go, meta/JS redirects)
         return when (val chain = AdChainHttpResolver.resolve(effectiveUrl, referer)) {
             is AdChainResult.Resolved -> {
-                if (chain.url != effectiveUrl) {
+                if (chain.url != effectiveUrl &&
                     emitDirectOrExtractor(
                         resolvedUrl = chain.url,
                         referer = chain.referer,
@@ -395,12 +452,14 @@ abstract class WordPressBaseProvider(
                         subtitleCallback = subtitleCallback,
                         callback = callback
                     )
+                ) {
+                    TargetOutcome.RESOLVED
                 } else {
-                    false
+                    TargetOutcome.TRY_WEBVIEW
                 }
             }
             is AdChainResult.HumanGateRequired,
-            is AdChainResult.DeadOrBlocked -> false
+            is AdChainResult.DeadOrBlocked -> TargetOutcome.SKIP_WEBVIEW
         }
     }
 
@@ -433,13 +492,17 @@ abstract class WordPressBaseProvider(
                     )
                     emittedAny = true
                 }
-                val host = runCatching { URI(payload.watchUrl).host }.getOrNull() ?: "animevilla.org"
                 for (frameUrl in iframes) {
-                    if (WordPressStreamResolvers.extractHsaStreamId(frameUrl) != null) {
-                        if (WordPressStreamResolvers.resolveHsaStream(frameUrl, name, host, callback)) {
-                            emittedAny = true
-                        }
-                    } else if (loadExtractor(frameUrl, payload.watchUrl, subtitleCallback, callback)) {
+                    if (emitDirectOrExtractor(
+                            resolvedUrl = frameUrl,
+                            referer = payload.watchUrl,
+                            hostLabel = "Player",
+                            qualityLabel = "Auto",
+                            qualityValue = Qualities.Unknown.value,
+                            subtitleCallback = subtitleCallback,
+                            callback = callback
+                        )
+                    ) {
                         emittedAny = true
                     }
                 }
@@ -449,7 +512,7 @@ abstract class WordPressBaseProvider(
         // 2. Process episode stream / redirector links via pure HTTP decoders & extractors
         for (stream in payload.streams) {
             if (stream.url.isBlank()) continue
-            val ok = runCatching {
+            val outcome = runCatching {
                 resolveSingleTarget(
                     targetUrl = stream.url,
                     referer = payload.referer,
@@ -459,18 +522,22 @@ abstract class WordPressBaseProvider(
                     subtitleCallback = subtitleCallback,
                     callback = callback
                 )
-            }.getOrDefault(false)
-            if (ok) {
-                emittedAny = true
-            } else if (!WordPressStreamResolvers.isKnownDeadUrl(stream.url)) {
-                unresolvedForWebView.add(stream)
+            }.getOrDefault(TargetOutcome.TRY_WEBVIEW)
+            when (outcome) {
+                TargetOutcome.RESOLVED -> emittedAny = true
+                TargetOutcome.TRY_WEBVIEW -> if (!WordPressStreamResolvers.isKnownDeadUrl(stream.url)) {
+                    unresolvedForWebView.add(stream)
+                }
+                TargetOutcome.SKIP_WEBVIEW -> Unit
             }
         }
 
-        // 3. Only if pure HTTP returned zero links, attempt short-timeout WebView interception
+        // 3. Only if pure HTTP returned zero links and non-human-gated links remain, attempt short-timeout WebView interception
         if (!emittedAny && unresolvedForWebView.isNotEmpty()) {
-            val mediaInterceptRegex =
-                Regex("https?://.*(?:pixeldrain\\.(?:com|dev)/(?:u|api/file)/|gofile\\.io/(?:d|download)/|\\.(?:mp4|m3u8|mkv|webm)(?:\\?.*)?$)", RegexOption.IGNORE_CASE)
+            val mediaInterceptRegex = Regex(
+                "https?://.*(?:pixeldrain\\.(?:com|dev)/(?:u|api/file)/|gofile\\.io/(?:d|download)/|streamtape\\.[a-z]+/[ve]/|krakenfiles\\.com/|hsastream\\.|rpmhub\\.|upns\\.|p2pplay\\.|abyssplayer\\.|abysscdn\\.|\\.(?:mp4|m3u8|mkv|webm)(?:\\?.*)?$)",
+                RegexOption.IGNORE_CASE
+            )
 
             for (stream in unresolvedForWebView.take(3)) {
                 val decoded = WordPressStreamResolvers.decodeTpxRedirectUrl(stream.url) ?: stream.url
@@ -487,26 +554,16 @@ abstract class WordPressBaseProvider(
                     )
                     val candidates = (listOfNotNull(finalReq) + extraReqs).map { it.url.toString() }.distinct()
                     for (candidateUrl in candidates) {
-                        val pd = WordPressSemanticParser.normalizePixeldrainUrl(candidateUrl)
-                        val resolvedUrl = pd ?: candidateUrl
-                        if (pd != null || WordPressSemanticParser.isDirectVideoUrl(resolvedUrl)) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name ${stream.hostLabel} (${stream.quality})",
-                                    url = resolvedUrl,
-                                    type = if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
-                                        ExtractorLinkType.M3U8
-                                    } else {
-                                        ExtractorLinkType.VIDEO
-                                    }
-                                ) {
-                                    this.referer = decoded
-                                    this.quality = stream.qualityValue
-                                }
+                        if (emitDirectOrExtractor(
+                                resolvedUrl = candidateUrl,
+                                referer = decoded,
+                                hostLabel = stream.hostLabel,
+                                qualityLabel = stream.quality,
+                                qualityValue = stream.qualityValue,
+                                subtitleCallback = subtitleCallback,
+                                callback = callback
                             )
-                            emittedAny = true
-                        } else if (loadExtractor(resolvedUrl, decoded, subtitleCallback, callback)) {
+                        ) {
                             emittedAny = true
                         }
                     }
