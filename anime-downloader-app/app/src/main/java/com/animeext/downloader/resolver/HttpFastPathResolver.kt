@@ -336,6 +336,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             }
 
             val landed = resp.url
+            val effectiveReferer = if (landed != currentUrl) currentUrl else referer
             if (isKnownDeadUrl(landed)) {
                 trace.add("Gate redirected to parked/dead host: ${summarizeUrl(landed)}")
                 return FastPathResult.Failed("Shortener gate landed on dead host", trace)
@@ -521,12 +522,12 @@ class HttpFastPathResolver(private val network: NetworkClient) {
                 lower.contains("countdown") || lower.contains("timer") || lower.contains("cloudflare")
             ) {
                 trace.add("Interactive JS gate detected -> opening hardened sandbox")
-                return FastPathResult.NeedsHardenedWebView(landed, referer, trace, "interactive_js_gate")
+                return FastPathResult.NeedsHardenedWebView(landed, effectiveReferer, trace, "interactive_js_gate")
             }
 
             // Last check: maybe landed page itself is an unknown HTML gate or download page
             trace.add("Page needs interactive browser evaluation -> opening hardened sandbox")
-            return FastPathResult.NeedsHardenedWebView(landed, referer, trace, "unrecognized_gate")
+            return FastPathResult.NeedsHardenedWebView(landed, effectiveReferer, trace, "unrecognized_gate")
         }
 
         return FastPathResult.NeedsHardenedWebView(currentUrl, referer, trace, "max_hops")
