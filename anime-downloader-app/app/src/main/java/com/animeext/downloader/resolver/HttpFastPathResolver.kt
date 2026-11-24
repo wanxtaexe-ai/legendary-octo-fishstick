@@ -192,6 +192,12 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             )
         }
 
+        // 1b. Mega.nz (pure-HTTP API + AES-128-CTR decryption; never open in WebView)
+        if (lower.contains("mega.nz/") || lower.contains("mega.co.nz/")) {
+            trace.add("Querying Mega.nz API...")
+            return resolveMegaNz(url, trace)
+        }
+
         // 2. Mirrored.to
         if (lower.contains("mirrored.to/files/")) {
             trace.add("Resolving Mirrored.to mirrors...")
@@ -207,6 +213,15 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             val st = resolveStreamTape(url, referer, trace)
             if (st != null) {
                 return FastPathResult.Resolved(listOf(st), trace)
+            }
+        }
+
+        // 3b. KrakenFiles
+        if (lower.contains("krakenfiles.com/")) {
+            trace.add("Extracting KrakenFiles link...")
+            val kf = resolveKrakenFiles(url, referer, trace)
+            if (kf != null) {
+                return FastPathResult.Resolved(listOf(kf), trace)
             }
         }
 
@@ -556,6 +571,8 @@ class HttpFastPathResolver(private val network: NetworkClient) {
                 } ?: run {
                     if (target.contains("streamtape.", true)) {
                         resolveStreamTape(target, getLinkUrl, trace)?.let { results.add(it) }
+                    } else if (target.contains("krakenfiles.", true)) {
+                        resolveKrakenFiles(target, getLinkUrl, trace)?.let { results.add(it) }
                     } else if (target.contains("gofile.io/d/", true)) {
                         results.addAll(resolveGoFile(target, trace))
                     } else if (wantDownload && DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(target)) {
@@ -870,6 +887,104 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             isZip = path.endsWith(".zip") || path.endsWith(".rar") || path.endsWith(".7z"),
             trace = trace.toList()
         )
+    }
+
+    private suspend fun resolveMegaNz(url: String, trace: MutableList<String>): FastPathResult {
+        val modern = Regex("mega\\.(?:co\\.)?nz/file/([A-Za-z0-9_-]+)#([A-Za-z0-9_-]+)", RegexOption.IGNORE_CASE).find(url)
+        val legacy = Regex("mega\\.(?:co\\.)?nz/#!([A-Za-z0-9_-]+)!([A-Za-z0-9_-]+)", RegexOption.IGNORE_CASE).find(url)
+        val match = modern ?: legacy
+        if (match == null) {
+            trace.add("Unsupported Mega.nz URL format (folder or missing key)")
+            return FastPathResult.Failed("Unsupported Mega.nz link — try Mir or PL1", trace)
+        }
+        val fileId = match.groupValues[1]
+        val keyStr = match.groupValues[2]
+        val rawKey = Base64Codec.decodeToBytes(keyStr)
+        if (rawKey == null || rawKey.size < 32) {
+            trace.add("Invalid Mega decryption key")
+            return FastPathResult.Failed("Invalid Mega.nz key", trace)
+        }
+
+        val aesKey = ByteArray(16) { i -> (rawKey[i].toInt() xor rawKey[i + 16].toInt()).toByte() }
+        val nonce = rawKey.copyOfRange(16, 24)
+        val aesKeyHex = aesKey.joinToString("") { "%02x".format(it) }
+        val nonceHex = nonce.joinToString("") { "%02x".format(it) }
+
+        val resp = runCatching {
+            network.postJson(
+                url = "https://g.api.mega.co.nz/cs?id=1",
+                jsonBody = """[{"a":"g","g":1,"p":"$fileId"}]""",
+                referer = "https://mega.nz/"
+            )
+        }.getOrNull() ?: run {
+            trace.add("Mega API network request failed")
+            return FastPathResult.Failed("Mega.nz API unreachable — try Mir or PL1", trace)
+        }
+
+        val arr = runCatching { org.json.JSONArray(resp.body.trim()) }.getOrNull()
+        val firstObj = arr?.optJSONObject(0)
+        if (firstObj == null) {
+            val errCode = arr?.optInt(0, -1) ?: -1
+            trace.add("Mega API error code: $errCode")
+            val msg = when (errCode) {
+                -9, -11 -> "Mega file removed or expired — try Mir or PL1"
+                -18 -> "Mega temporary bandwidth limit — try Mir or PL1"
+                else -> "Mega API error ($errCode) — try Mir or PL1"
+            }
+            return FastPathResult.Failed(msg, trace)
+        }
+
+        val dlUrl = firstObj.optString("g", "")
+        if (!dlUrl.startsWith("http")) {
+            trace.add("Mega API returned no download URL")
+            return FastPathResult.Failed("Mega.nz quota/error — try Mir or PL1", trace)
+        }
+
+        val attrB64 = firstObj.optString("at", "")
+        val fileName = decryptMegaFileName(attrB64, aesKey) ?: "mega_$fileId.mp4"
+        trace.add("Mega.nz ready -> $fileName (AES-CTR)")
+        val target = buildResolvedTarget(dlUrl, "https://mega.nz/", fileNameHint = fileName, trace = trace).copy(
+            megaKeyHex = aesKeyHex,
+            megaNonceHex = nonceHex
+        )
+        return FastPathResult.Resolved(listOf(target), trace)
+    }
+
+    private fun decryptMegaFileName(attrB64: String, aesKey: ByteArray): String? {
+        if (attrB64.isBlank()) return null
+        return runCatching {
+            val encBytes = Base64Codec.decodeToBytes(attrB64) ?: return null
+            val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(ByteArray(16)))
+            val plain = String(cipher.doFinal(encBytes), StandardCharsets.UTF_8).trimEnd('\u0000')
+            if (!plain.startsWith("MEGA{")) return null
+            JSONObject(plain.removePrefix("MEGA")).optString("n", "").ifBlank { null }
+        }.getOrNull()
+    }
+
+    private suspend fun resolveKrakenFiles(
+        url: String,
+        referer: String?,
+        trace: MutableList<String>
+    ): ResolvedTarget? {
+        val resp = runCatching { network.get(url, referer = referer) }.getOrNull() ?: return null
+        val doc = Jsoup.parse(resp.body, resp.url)
+        val form = doc.selectFirst("form#dl-form, form[action*=/download/]") ?: return null
+        val action = SemanticParser.resolveUrl(form.attr("action"), resp.url) ?: return null
+        val token = form.selectFirst("input[name=token]")?.attr("value").orEmpty()
+        if (token.isBlank()) return null
+        val postResp = runCatching {
+            network.postForm(
+                url = action,
+                fields = mapOf("token" to token),
+                referer = resp.url,
+                headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+            )
+        }.getOrNull() ?: return null
+        val dlUrl = runCatching { JSONObject(postResp.body).optString("url", "") }.getOrNull().orEmpty()
+        if (!dlUrl.startsWith("http")) return null
+        trace.add("KrakenFiles resolved -> ${summarizeUrl(dlUrl)}")
+        return buildResolvedTarget(dlUrl, resp.url, trace = trace)
     }
 
     private fun summarizeUrl(url: String): String {

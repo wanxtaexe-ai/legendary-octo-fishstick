@@ -68,6 +68,8 @@ data class ResolvedTarget(
     val fileNameHint: String? = null,
     val isHls: Boolean = false,
     val isZip: Boolean = false,
+    val megaKeyHex: String? = null,
+    val megaNonceHex: String? = null,
     val trace: List<String> = emptyList()
 )
 
@@ -89,6 +91,8 @@ data class DownloadTask(
     val fileName: String,
     val destinationPath: String,
     val headers: Map<String, String> = emptyMap(),
+    val megaKeyHex: String? = null,
+    val megaNonceHex: String? = null,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = -1L,
     val speedBytesPerSec: Long = 0L,

@@ -12,11 +12,8 @@ object AdChainDomScripts {
   } catch (_) {}
 
   try {
-    var noopOpen = function() { return null; };
-    Object.defineProperty(window, 'open', { value: noopOpen, writable: false, configurable: false });
-  } catch (_) {
-    try { window.open = function() { return null; }; } catch (__) {}
-  }
+    window.open = function() { return null; };
+  } catch (_) {}
 
   // Neutralize Notification permission prompts inside pages
   try {
@@ -92,6 +89,17 @@ object AdChainDomScripts {
     }
 
     var nextAnchor = document.querySelector('#nextPage a, a.get-link:not(.disabled), #btn-get-link:not(.disabled), #get-link-btn:not(.disabled)');
+    if (!nextAnchor) {
+      var anchors = document.querySelectorAll('a[href]');
+      for (var k = 0; k < anchors.length; k++) {
+        var txt = (anchors[k].innerText || '').trim().toLowerCase();
+        if ((txt === 'download file' || txt === 'download now' || txt === 'click here to continue') &&
+            anchors[k].href && /^https?:/i.test(anchors[k].href)) {
+          nextAnchor = anchors[k];
+          break;
+        }
+      }
+    }
     if (nextAnchor && nextAnchor.href && /^https?:/i.test(nextAnchor.href)) {
       return JSON.stringify({ stage: 'next_anchor', url: nextAnchor.href });
     }

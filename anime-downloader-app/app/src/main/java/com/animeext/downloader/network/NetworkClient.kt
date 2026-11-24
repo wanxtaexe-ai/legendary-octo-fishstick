@@ -14,8 +14,10 @@ import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.dnsoverhttps.DnsOverHttps
 import org.json.JSONObject
 import java.net.InetAddress
@@ -196,6 +198,43 @@ class NetworkClient {
             .post(form.build())
             .header("User-Agent", CHROME_UA)
             .header("Accept", "application/json, text/html, */*; q=0.8")
+
+        if (!referer.isNullOrBlank()) {
+            reqBuilder.header("Referer", referer)
+        }
+        for ((k, v) in headers) {
+            reqBuilder.header(k, v)
+        }
+
+        httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+            val finalUrl = resp.request.url.toString()
+            val bodyStr = resp.body?.string().orEmpty()
+            val headerMap = LinkedHashMap<String, String>()
+            for (i in 0 until resp.headers.size) {
+                headerMap[resp.headers.name(i).lowercase()] = resp.headers.value(i)
+            }
+            HttpResponseData(
+                code = resp.code,
+                url = finalUrl,
+                body = bodyStr,
+                headers = headerMap,
+                cookies = cookieJar.snapshotForUrl(finalUrl)
+            )
+        }
+    }
+
+    suspend fun postJson(
+        url: String,
+        jsonBody: String,
+        referer: String? = null,
+        headers: Map<String, String> = emptyMap()
+    ): HttpResponseData = withContext(Dispatchers.IO) {
+        val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .post(body)
+            .header("User-Agent", CHROME_UA)
+            .header("Accept", "application/json, */*")
 
         if (!referer.isNullOrBlank()) {
             reqBuilder.header("Referer", referer)
