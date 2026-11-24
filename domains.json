@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-23T00:00:00Z",
+  "defaultUserAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+  "cacheTtlSeconds": 3600,
+  "sites": {
+    "lordsanime": {
+      "id": "lordsanime",
+      "name": "Lord's Anime",
+      "baseUrl": "https://www.lordsanime.com",
+      "fallbackUrls": [
+        "https://lordsanime.com"
+      ],
+      "language": "hi-IN",
+      "theme": "wordpress-tie",
+      "latestPath": "/",
+      "searchPath": "/?s={query}",
+      "fallbackSearchPath": "/?s={query}",
+      "pagePath": "/page/{page}/",
+      "supportsEmbeddedPlayer": false,
+      "enabled": true
+    },
+    "tpxsub": {
+      "id": "tpxsub",
+      "name": "TpXAnime",
+      "baseUrl": "https://www.tpxsub.com",
+      "fallbackUrls": [
+        "https://tpxsub.com"
+      ],
+      "language": "hi-IN",
+      "theme": "wordpress-blog",
+      "latestPath": "/",
+      "searchPath": "/?s={query}",
+      "fallbackSearchPath": "/?s={query}",
+      "pagePath": "/page/{page}/",
+      "supportsEmbeddedPlayer": false,
+      "enabled": true
+    },
+    "ybxanime": {
+      "id": "ybxanime",
+      "name": "YBX Anime",
+      "baseUrl": "https://ybxanime.com",
+      "fallbackUrls": [
+        "https://www.ybxanime.com"
+      ],
+      "language": "hi-IN",
+      "theme": "wordpress-tie",
+      "latestPath": "/",
+      "searchPath": "/?s={query}",
+      "fallbackSearchPath": "/?s={query}",
+      "pagePath": "/page/{page}/",
+      "supportsEmbeddedPlayer": false,
+      "enabled": true
+    },
+    "hindisubbedacademy": {
+      "id": "hindisubbedacademy",
+      "name": "Hindi Subbed Academy",
+      "baseUrl": "https://hindisubbedacademy.com",
+      "fallbackUrls": [
+        "https://www.hindisubbedacademy.com"
+      ],
+      "language": "hi-IN",
+      "theme": "kiranime",
+      "latestPath": "/homepage/",
+      "searchPath": "/?s={query}",
+      "fallbackSearchPath": "/search/?keyword={query}",
+      "pagePath": "/anime/page/{page}/",
+      "supportsEmbeddedPlayer": true,
+      "enabled": true
+    },
+    "animevilla": {
+      "id": "animevilla",
+      "name": "AnimeVilla",
+      "baseUrl": "https://animevilla.org",
+      "fallbackUrls": [
+        "https://www.animevilla.org",
+        "https://animevilla.in"
+      ],
+      "language": "hi-IN",
+      "theme": "kiranime",
+      "latestPath": "/homepage/",
+      "searchPath": "/?s={query}",
+      "fallbackSearchPath": "/search/?keyword={query}",
+      "pagePath": "/anime/page/{page}/",
+      "supportsEmbeddedPlayer": true,
+      "enabled": true
+    }
+  },
+  "directMediaHosts": [
+    {
+      "name": "Direct Stream",
+      "type": "direct",
+      "pattern": "\\.(mp4|m3u8|mkv|webm)(\\?.*)?$"
+    },
+    {
+      "name": "Pixeldrain",
+      "type": "pixeldrain",
+      "pattern": "https?://(?:www\\.)?pixeldrain\\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)"
+    },
+    {
+      "name": "Gofile",
+      "type": "gofile",
+      "pattern": "https?://(?:[a-z0-9-]+\\.)?gofile\\.io/(?:d|download)/([a-zA-Z0-9_-]+)"
+    },
+    {
+      "name": "AsuraServer",
+      "type": "index",
+      "pattern": "https?://(?:www\\.)?asurasever\\.cloud/.+"
+    }
+  ],
+  "redirectorHosts": [
+    "shortsync.epdexx.com",
+    "links.tpxsub.com",
+    "hsalinks.eu.org",
+    "ybxanime.com/7k29m4n8q"
+  ]
+}
