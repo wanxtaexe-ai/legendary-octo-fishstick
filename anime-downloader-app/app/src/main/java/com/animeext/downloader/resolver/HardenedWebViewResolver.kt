@@ -33,6 +33,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 sealed class SandboxResolutionResult {
     data class Captured(val target: ResolvedTarget, val blockedCount: Int) : SandboxResolutionResult()
@@ -82,8 +83,7 @@ class HardenedWebViewResolver(
             }
 
                 var humanSurfaceShown = false
-                @Volatile
-                var activePageUrl = gateUrl
+                val activePageUrl = AtomicReference(gateUrl)
 
             fun notifyUi(visible: Boolean, url: String, challengeKind: String? = null) {
                 if (disposed.get()) return
@@ -330,7 +330,7 @@ class HardenedWebViewResolver(
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        if (!url.isNullOrBlank()) activePageUrl = url
+                        if (!url.isNullOrBlank()) activePageUrl.set(url)
                     }
 
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -338,7 +338,7 @@ class HardenedWebViewResolver(
                         val req = request ?: return null
                         val url = req.url?.toString() ?: return null
                         if (!req.isForMainFrame) {
-                            val currentSnap = activePageUrl
+                            val currentSnap = activePageUrl.get()
                             val pageHost = AdFilterPolicy.hostOf(currentSnap) ?: AdFilterPolicy.hostOf(gateUrl)
                             if (AdFilterPolicy.decideSubresource(url, pageHost) == AdFilterPolicy.SubresourceDecision.BLOCK_AD) {
                                 blockedCount.incrementAndGet()
@@ -379,14 +379,14 @@ class HardenedWebViewResolver(
                             completeWithDestination(target, runCatching { view?.url }.getOrNull() ?: gateUrl)
                             return true
                         }
-                        activePageUrl = target
+                        activePageUrl.set(target)
                         return false
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (disposed.get() || result.isCompleted) return
                         val landed = url.orEmpty()
-                        if (landed.isNotBlank()) activePageUrl = landed
+                        if (landed.isNotBlank()) activePageUrl.set(landed)
                         if (landed.contains("error.epdexx.com", ignoreCase = true)) {
                             humanSurfaceShown = true
                             trace.add("epdexx.com rejected direct referer/gate")
