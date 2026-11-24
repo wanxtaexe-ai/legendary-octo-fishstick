@@ -1,0 +1,102 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=animevilla.org&sz=128",
+        "fileHash": "sha256-54b5fe3f9ef93a33949ec4c0f192c83cb329f9bd5b497f8c5e3655fb875f2839",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
+        "fileSize": 46441,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "wanxtaexe-ai"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "AnimeVilla",
+        "description": "Hindi Dubbed Anime & Embedded HLS Streams from AnimeVilla (animevilla.org)",
+        "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/AnimeVilla.cs3",
+        "name": "AnimeVilla"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=hindisubbedacademy.com&sz=128",
+        "fileHash": "sha256-c4c1f3fcb4f5b5d8b8931ac3b55611b387ff173552ef54c54677e95c1cc27b9b",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
+        "fileSize": 46438,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "wanxtaexe-ai"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "HindiSubbedAcademy",
+        "description": "Hindi Subbed Anime from Hindi Subbed Academy (hindisubbedacademy.com)",
+        "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/HindiSubbedAcademy.cs3",
+        "name": "HindiSubbedAcademy"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=www.lordsanime.com&sz=128",
+        "fileHash": "sha256-152b6e613405695bf16597dbcc419adb6e7fef3c803c6c587d8386a0b9c6c867",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
+        "fileSize": 46410,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "wanxtaexe-ai"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "LordsAnime",
+        "description": "Hindi Subbed Anime from Lord's Anime (lordsanime.com) with remote domains.json support",
+        "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/LordsAnime.cs3",
+        "name": "LordsAnime"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=www.tpxsub.com&sz=128",
+        "fileHash": "sha256-df08d714adf32bb712acea93f460f1a7479a189cdb1f4a29d1d65588e8e747aa",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
+        "fileSize": 46425,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "wanxtaexe-ai"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "TpxSub",
+        "description": "Hindi Subbed Anime from TpXAnime (tpxsub.com) with 480p/720p/1080p stream support",
+        "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/TpxSub.cs3",
+        "name": "TpxSub"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=ybxanime.com&sz=128",
+        "fileHash": "sha256-60b4c3004a3fe79349e5c760716ba4d2d43af8aea300208907ba294480395a90",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/wanxtaexe-ai/legendary-octo-fishstick",
+        "fileSize": 46413,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "wanxtaexe-ai"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "YbxAnime",
+        "description": "Hindi Subbed Anime from YBX Anime (ybxanime.com) with remote domains.json support",
+        "url": "https://raw.githubusercontent.com/wanxtaexe-ai/legendary-octo-fishstick/builds/YbxAnime.cs3",
+        "name": "YbxAnime"
+    }
+]
