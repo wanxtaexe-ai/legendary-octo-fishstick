@@ -126,8 +126,15 @@ object AdFilterPolicy {
         if (isAdHost(targetHost)) return NavigationDecision.BLOCK_POPUP_OR_AD
 
         val currentHost = hostOf(currentUrl)
-        if (currentHost != null && (targetHost == currentHost || targetHost.endsWith(".$currentHost"))) {
-            return NavigationDecision.ALLOW
+        if (currentHost != null) {
+            if (targetHost == currentHost || targetHost.endsWith(".$currentHost")) {
+                return NavigationDecision.ALLOW
+            }
+            val currentRoot = rootDomain(currentHost)
+            val targetRoot = rootDomain(targetHost)
+            if (currentRoot != null && currentRoot == targetRoot) {
+                return NavigationDecision.ALLOW
+            }
         }
 
         if (isRedirect || hasUserGesture ||
@@ -138,5 +145,11 @@ object AdFilterPolicy {
         }
 
         return NavigationDecision.BLOCK_POPUP_OR_AD
+    }
+
+    private fun rootDomain(host: String): String? {
+        val parts = host.split('.').filter { it.isNotBlank() }
+        if (parts.size < 2) return null
+        return "${parts[parts.size - 2]}.${parts[parts.size - 1]}"
     }
 }

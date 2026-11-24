@@ -46,6 +46,7 @@ data class GateSandboxState(
     val currentUrl: String = "",
     val challengeKind: String? = null,
     val blockedCount: Int = 0,
+    val onForceShow: () -> Unit = {},
     val onCancel: () -> Unit = {}
 )
 
@@ -80,8 +81,11 @@ class HardenedWebViewResolver(
                 )
             }
 
+            var humanSurfaceShown = false
+
             fun notifyUi(visible: Boolean, url: String, challengeKind: String? = null) {
                 if (disposed.get()) return
+                if (visible) humanSurfaceShown = true
                 onSandboxStateChanged(
                     GateSandboxState(
                         webView = if (disposed.get()) null else web,
@@ -89,6 +93,12 @@ class HardenedWebViewResolver(
                         currentUrl = url,
                         challengeKind = challengeKind,
                         blockedCount = blockedCount.get(),
+                        onForceShow = {
+                            if (!disposed.get() && !result.isCompleted) {
+                                humanSurfaceShown = true
+                                notifyUi(visible = true, url = runCatching { web.url }.getOrNull() ?: url)
+                            }
+                        },
                         onCancel = {
                             if (!result.isCompleted) {
                                 trace.add("User cancelled sandbox gate")
@@ -196,7 +206,7 @@ class HardenedWebViewResolver(
                     completeWithDestination(url, web.url ?: gateUrl)
                 }
 
-                var humanSurfaceShown = false
+                var autoSurfaceScheduled = false
 
                 fun pollDomStage() {
                     if (disposed.get() || result.isCompleted) return
@@ -378,6 +388,15 @@ class HardenedWebViewResolver(
                 }
 
                 web.loadUrl(gateUrl, refererHeader(referer))
+                if (!autoSurfaceScheduled) {
+                    autoSurfaceScheduled = true
+                    mainHandler.postDelayed({
+                        if (!disposed.get() && !result.isCompleted && !humanSurfaceShown) {
+                            trace.add("Surfacing interactive sandbox for manual/button check")
+                            notifyUi(visible = true, url = runCatching { web.url }.getOrNull() ?: gateUrl)
+                        }
+                    }, 4500L)
+                }
                 withTimeoutOrNull(timeoutMs) { result.await() }
                     ?: SandboxResolutionResult.Failed("Gate timed out after ${timeoutMs / 1000}s", blockedCount.get(), trace)
             } finally {

@@ -45,8 +45,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             "g-recaptcha",
             "cf-turnstile",
             "h-captcha",
-            "challenges.cloudflare.com",
-            "/cdn-cgi/challenge-platform/",
+            "challenges.cloudflare.com/turnstile",
             "please click on below captcha box",
             "adcopy_challenge"
         )
@@ -369,7 +368,10 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             }
 
             val lower = body.lowercase()
+            val isCfIuam = resp.code in setOf(403, 503) &&
+                (lower.contains("just a moment") || lower.contains("cf-chl-") || lower.contains("/cdn-cgi/challenge-platform/"))
             val challenge = challengeMarkers.firstOrNull { lower.contains(it) }
+                ?: if (isCfIuam) "cloudflare_challenge" else null
             if (challenge != null) {
                 trace.add("Human challenge ($challenge) -> opening hardened gate sandbox")
                 return FastPathResult.NeedsHardenedWebView(landed, referer, trace, "human_challenge:$challenge")
@@ -791,7 +793,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
 
             val encryptedDatas = Regex("(?:const|var)\\s+datas\\s*=\\s*\"([^\"]+)\"")
                 .find(html)?.groupValues?.get(1) ?: continue
-            val metadata = decryptAbyssOffline(encryptedDatas) ?: continue
+            val metadata = decryptAbyssOffline(encryptedDatas) ?: decryptAbyssOnlineFallback(encryptedDatas) ?: continue
             val sourcesArr = metadata.optJSONObject("mp4")?.optJSONArray("sources")
             if (sourcesArr != null) {
                 for (i in 0 until sourcesArr.length()) {
@@ -832,6 +834,20 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             val cipher = Cipher.getInstance("AES/CTR/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(keyBytes.copyOf(16)))
             JSONObject(String(cipher.doFinal(mediaStr.toByteArray(StandardCharsets.ISO_8859_1)), StandardCharsets.UTF_8))
+        }.getOrNull()
+    }
+
+    private suspend fun decryptAbyssOnlineFallback(encodedDatas: String): JSONObject? {
+        return runCatching {
+            val resp = network.postJson(
+                url = "https://enc-dec.app/api/dec-abyss",
+                jsonBody = JSONObject().put("text", encodedDatas).toString(),
+                referer = "https://playhydrax.com/",
+                headers = mapOf("Origin" to "https://playhydrax.com")
+            )
+            val result = JSONObject(resp.body).optJSONObject("result") ?: return null
+            val sources = result.optJSONArray("sources") ?: return null
+            JSONObject().put("mp4", JSONObject().put("sources", sources))
         }.getOrNull()
     }
 
@@ -934,10 +950,15 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             return FastPathResult.Failed(msg, trace)
         }
 
-        val dlUrl = firstObj.optString("g", "")
-        if (!dlUrl.startsWith("http")) {
+        val rawDlUrl = firstObj.optString("g", "")
+        if (!rawDlUrl.startsWith("http")) {
             trace.add("Mega API returned no download URL")
             return FastPathResult.Failed("Mega.nz quota/error — try Mir or PL1", trace)
+        }
+        val dlUrl = if (rawDlUrl.startsWith("http://")) {
+            "https://${rawDlUrl.removePrefix("http://")}"
+        } else {
+            rawDlUrl
         }
 
         val attrB64 = firstObj.optString("at", "")
