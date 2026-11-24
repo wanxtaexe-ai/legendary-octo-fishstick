@@ -83,9 +83,10 @@ class AdChainHttpFastPath(
     val cookieJar: InMemorySessionCookieJar = InMemorySessionCookieJar(),
     private val userAgent: String = DEFAULT_UA,
     private val maxHops: Int = 12,
-    private val maxTimerWaitSeconds: Int = 20
+    private val maxTimerWaitSeconds: Int = 20,
+    baseClient: OkHttpClient? = null
 ) {
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    private val client: OkHttpClient = (baseClient?.newBuilder() ?: OkHttpClient.Builder())
         .cookieJar(cookieJar)
         .followRedirects(true)
         .followSslRedirects(true)
