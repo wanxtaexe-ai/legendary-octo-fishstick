@@ -1,9 +1,11 @@
 package com.animeext.cloudstream
 
+import android.util.Base64
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URI
+import java.nio.charset.StandardCharsets
 
 data class ParsedCard(
     val title: String,
@@ -445,7 +447,27 @@ object WordPressSemanticParser {
             ) {
                 continue
             }
-            iframes.add(resolved)
+            if (!iframes.contains(resolved)) iframes.add(resolved)
+        }
+
+        // Kiranime / AnimeVilla base64-encoded embed attributes (`data-embed-id`)
+        for (el in doc.select("[data-embed-id]")) {
+            val b64 = el.attr("data-embed-id").trim()
+            if (b64.isBlank()) continue
+            val decoded = runCatching {
+                String(Base64.decode(b64, Base64.DEFAULT), StandardCharsets.UTF_8).trim()
+            }.getOrNull() ?: continue
+            val urlMatch = Regex("https?://[^\\s\"'<>]+").find(decoded)?.value ?: continue
+            if (!iframes.contains(urlMatch)) iframes.add(urlMatch)
+        }
+
+        val hsaStreamRegex = Regex(
+            "https?://hsastream\\.[^\\s\"'<>\\\\]+",
+            RegexOption.IGNORE_CASE
+        )
+        hsaStreamRegex.findAll(html).forEach { match ->
+            val url = match.value.trimEnd(',', ';', ')')
+            if (!iframes.contains(url)) iframes.add(url)
         }
 
         val keyedQualityRegex = Regex(
@@ -465,5 +487,24 @@ object WordPressSemanticParser {
         }
 
         return media to iframes
+    }
+
+    /**
+     * Parses Kiranime `/watch/...` episode switcher links (`a.episode-list-item`).
+     */
+    fun parseKiranimeWatchEpisodes(html: String, baseUrl: String): List<Pair<Int, String>> {
+        val doc = Jsoup.parse(html, baseUrl)
+        val results = mutableListOf<Pair<Int, String>>()
+        val seen = mutableSetOf<String>()
+        for (el in doc.select("a.episode-list-item[href], a[href*=/watch/][data-episode-search-query]")) {
+            val href = resolveUrl(el.attr("href"), baseUrl) ?: continue
+            if (!href.contains("/watch/", ignoreCase = true) || seen.contains(href)) continue
+            seen.add(href)
+            val epAttr = el.attr("data-episode-search-query").trim().toIntOrNull()
+                ?: Regex("(\\d+)").find(el.text())?.groupValues?.get(1)?.toIntOrNull()
+                ?: (results.size + 1)
+            results.add(epAttr to href)
+        }
+        return results
     }
 }
