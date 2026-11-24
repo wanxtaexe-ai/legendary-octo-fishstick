@@ -125,26 +125,11 @@ object AdFilterPolicy {
         if (isTrustedVerificationHost(targetHost)) return NavigationDecision.ALLOW
         if (isAdHost(targetHost)) return NavigationDecision.BLOCK_POPUP_OR_AD
 
-        val currentHost = hostOf(currentUrl)
-        if (currentHost != null) {
-            if (targetHost == currentHost || targetHost.endsWith(".$currentHost")) {
-                return NavigationDecision.ALLOW
-            }
-            val currentRoot = rootDomain(currentHost)
-            val targetRoot = rootDomain(targetHost)
-            if (currentRoot != null && currentRoot == targetRoot) {
-                return NavigationDecision.ALLOW
-            }
-        }
-
-        if (isRedirect || hasUserGesture ||
-            DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(targetUrl) ||
-            DownloadAndSchemeGuard.isKnownCloudFileHost(targetUrl)
-        ) {
-            return NavigationDecision.ALLOW
-        }
-
-        return NavigationDecision.BLOCK_POPUP_OR_AD
+        // Allow main-frame navigations inside the sandbox unless they point to an ad host or
+        // unsafe scheme: shortener chains frequently advance via timed JS window.location.href
+        // transitions where hasUserGesture=false and isRedirect=false. Popups/new tabs are
+        // separately blocked by WebChromeClient.onCreateWindow.
+        return NavigationDecision.ALLOW
     }
 
     private fun rootDomain(host: String): String? {

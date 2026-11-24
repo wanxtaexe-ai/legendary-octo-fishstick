@@ -152,16 +152,16 @@ class AnimeCatalogRepository(private val network: NetworkClient) {
         val resp = network.get(seriesUrl)
         val detail = SemanticParser.parseSeriesDetail(resp.body, resp.url, site)
 
-        // If Kiranime series page has a /watch/ page and no download episodes, inspect the watch page
+        // If Kiranime series page has a /watch/ page, inspect it for streaming servers too
         val watchUrl = detail.watchUrl
-        if (detail.episodes.isEmpty() && !watchUrl.isNullOrBlank()) {
+        if (!watchUrl.isNullOrBlank()) {
             val watchResp = runCatching { network.get(watchUrl, referer = resp.url) }.getOrNull()
             if (watchResp != null) {
                 val watchEps = SemanticParser.parseKiranimeWatchEpisodes(watchResp.body, watchResp.url)
                 if (watchEps.isNotEmpty()) {
-                    val entries = watchEps.map { (epNum, epUrl) ->
+                    val watchEntries = watchEps.map { (epNum, epUrl) ->
                         EpisodeEntry(
-                            label = "Episode $epNum",
+                            label = "Watch · Episode $epNum",
                             episodeNumber = epNum,
                             season = 1,
                             streams = listOf(
@@ -174,19 +174,21 @@ class AnimeCatalogRepository(private val network: NetworkClient) {
                             )
                         )
                     }
-                    return detail.copy(episodes = entries)
+                    return detail.copy(episodes = detail.episodes + watchEntries)
                 }
 
-                val embedded = SemanticParser.extractEmbeddedMedia(watchResp.body, watchResp.url)
-                val streams = mutableListOf<StreamOption>()
-                embedded.directMediaUrls.forEach {
-                    streams.add(StreamOption(quality = "HD", hostLabel = "Direct", url = it, isDirectVideo = true, referer = watchResp.url))
-                }
-                embedded.iframeUrls.forEach {
-                    streams.add(StreamOption(quality = "Stream", hostLabel = "Embed", url = it, referer = watchResp.url))
-                }
-                if (streams.isNotEmpty()) {
-                    return detail.copy(episodes = listOf(EpisodeEntry("Episode 1", 1, 1, streams)))
+                if (detail.episodes.isEmpty()) {
+                    val embedded = SemanticParser.extractEmbeddedMedia(watchResp.body, watchResp.url)
+                    val streams = mutableListOf<StreamOption>()
+                    embedded.directMediaUrls.forEach {
+                        streams.add(StreamOption(quality = "HD", hostLabel = "Direct", url = it, isDirectVideo = true, referer = watchResp.url))
+                    }
+                    embedded.iframeUrls.forEach {
+                        streams.add(StreamOption(quality = "Stream", hostLabel = "Embed", url = it, referer = watchResp.url))
+                    }
+                    if (streams.isNotEmpty()) {
+                        return detail.copy(episodes = listOf(EpisodeEntry("Episode 1", 1, 1, streams)))
+                    }
                 }
             }
         }

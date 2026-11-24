@@ -81,7 +81,9 @@ class HardenedWebViewResolver(
                 )
             }
 
-            var humanSurfaceShown = false
+                var humanSurfaceShown = false
+                @Volatile
+                var activePageUrl = gateUrl
 
             fun notifyUi(visible: Boolean, url: String, challengeKind: String? = null) {
                 if (disposed.get()) return
@@ -222,6 +224,11 @@ class HardenedWebViewResolver(
                             when (stage) {
                                 "direct_media", "next_anchor" -> {
                                     val target = obj.optString("url")
+                                    val targetHost = AdFilterPolicy.hostOf(target)
+                                    if (targetHost != null && AdFilterPolicy.isAdHost(targetHost)) {
+                                        blockedCount.incrementAndGet()
+                                        return@evaluateJavascript
+                                    }
                                     if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(target) ||
                                         DownloadAndSchemeGuard.isKnownCloudFileHost(target)
                                     ) {
@@ -322,20 +329,25 @@ class HardenedWebViewResolver(
                         return true
                     }
 
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        if (!url.isNullOrBlank()) activePageUrl = url
+                    }
+
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                         if (disposed.get()) return null
                         val req = request ?: return null
                         val url = req.url?.toString() ?: return null
                         if (!req.isForMainFrame) {
-                            val pageHost = AdFilterPolicy.hostOf(gateUrl)
+                            val currentSnap = activePageUrl
+                            val pageHost = AdFilterPolicy.hostOf(currentSnap) ?: AdFilterPolicy.hostOf(gateUrl)
                             if (AdFilterPolicy.decideSubresource(url, pageHost) == AdFilterPolicy.SubresourceDecision.BLOCK_AD) {
                                 blockedCount.incrementAndGet()
                                 return WebResourceResponse("text/plain", "utf-8", 204, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
                             }
-                            if (DownloadAndSchemeGuard.isDirectVideoUrl(url) && !result.isCompleted) {
+                            if (shouldSniffSubresourceMedia(url, currentSnap) && !result.isCompleted) {
                                 mainHandler.post {
                                     if (!disposed.get()) {
-                                        completeWithDestination(url, runCatching { view?.url }.getOrNull() ?: gateUrl)
+                                        completeWithDestination(url, runCatching { view?.url }.getOrNull() ?: currentSnap)
                                     }
                                 }
                             }
@@ -367,12 +379,20 @@ class HardenedWebViewResolver(
                             completeWithDestination(target, runCatching { view?.url }.getOrNull() ?: gateUrl)
                             return true
                         }
+                        activePageUrl = target
                         return false
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (disposed.get() || result.isCompleted) return
                         val landed = url.orEmpty()
+                        if (landed.isNotBlank()) activePageUrl = landed
+                        if (landed.contains("error.epdexx.com", ignoreCase = true)) {
+                            humanSurfaceShown = true
+                            trace.add("epdexx.com rejected direct referer/gate")
+                            notifyUi(visible = true, url = landed, challengeKind = "epdexx_error")
+                            return
+                        }
                         notifyUi(visible = humanSurfaceShown, url = landed)
 
                         if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(landed) ||
@@ -431,6 +451,45 @@ class HardenedWebViewResolver(
         }
 
         return capturedResult
+    }
+
+    private fun shouldSniffSubresourceMedia(url: String, pageUrl: String): Boolean {
+        if (!DownloadAndSchemeGuard.isDirectVideoUrl(url)) return false
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        if (path.endsWith(".webm")) return false
+
+        val lowerUrl = url.lowercase()
+        val noiseMarkers = listOf(
+            "wp-content/uploads",
+            "tutorial",
+            "how-to",
+            "howto",
+            "promo",
+            "trailer",
+            "bumper",
+            "sample",
+            "preview"
+        )
+        if (noiseMarkers.any { lowerUrl.contains(it) }) return false
+        val urlHost = AdFilterPolicy.hostOf(url)
+        if (urlHost != null && AdFilterPolicy.isAdHost(urlHost)) return false
+
+        val lowerPage = pageUrl.lowercase()
+        val gateHosts = listOf(
+            "srnky.", "shrinkearn.", "hsalinks.", "shortsync.", "7k29m4n8q",
+            "ybxanime.", "hindisubbedacademy.", "animevilla.", "safelink",
+            "modiji", "gplinks", "vplinks", "shrinkme.", "tpi.li", "oii.la"
+        )
+        if (gateHosts.any { lowerPage.contains(it) }) return false
+
+        if (path.endsWith(".m3u8") || path.endsWith(".m3u")) return true
+
+        val playerHosts = listOf(
+            "abysscdn.", "abyssplayer.", "hsastream.", "rpmhub.", "rpmshare.",
+            "streamtape.", "vidhide.", "streamhg.", "p2pplay.", "filemoon.",
+            "streamwish.", "hindisubanime.co"
+        )
+        return playerHosts.any { lowerPage.contains(it) }
     }
 
     private fun seedCookiesIntoWebView(url: String, cm: CookieManager) {

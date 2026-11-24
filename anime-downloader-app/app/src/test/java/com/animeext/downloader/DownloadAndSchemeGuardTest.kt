@@ -68,5 +68,26 @@ class DownloadAndSchemeGuardTest {
             AdFilterPolicy.NavigationDecision.BLOCK_UNSAFE_OR_EXECUTABLE,
             AdFilterPolicy.decideMainFrameNavigation("https://shortener.example", "intent://foo", hasUserGesture = true, isRedirect = false)
         )
+        assertEquals(
+            AdFilterPolicy.NavigationDecision.BLOCK_POPUP_OR_AD,
+            AdFilterPolicy.decideMainFrameNavigation("https://srnky.com/EA7epdFz", "https://tryedesign.com/4/abc", hasUserGesture = false, isRedirect = false)
+        )
+        assertEquals(
+            AdFilterPolicy.NavigationDecision.ALLOW,
+            AdFilterPolicy.decideMainFrameNavigation("https://srnky.com/EA7epdFz", "https://las.epdexx.com/0:/folder/", hasUserGesture = false, isRedirect = false)
+        )
+    }
+
+    @Test
+    fun semanticParserIgnoresTutorialAndWebmBumpers() {
+        val html = """
+            <html><body>
+              <video src="https://ybxanime.com/wp-content/uploads/2026/01/tutorial.mp4"></video>
+              <video><source src="https://cdn.example.com/bumper.webm" /></video>
+              <video><source src="https://cdn.example.com/streams/episode_01.m3u8" /></video>
+            </body></html>
+        """.trimIndent()
+        val res = com.animeext.downloader.parser.SemanticParser.extractEmbeddedMedia(html, "https://ybxanime.com/post/")
+        assertEquals(listOf("https://cdn.example.com/streams/episode_01.m3u8"), res.directMediaUrls)
     }
 }

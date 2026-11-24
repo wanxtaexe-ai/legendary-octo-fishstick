@@ -385,6 +385,11 @@ object SemanticParser {
 
         fun addMedia(raw: String?) {
             val resolved = resolveUrl(raw, baseUrl) ?: return
+            val lower = resolved.lowercase()
+            if (lower.substringBefore('?').endsWith(".webm")) return
+            if (listOf("wp-content/uploads", "tutorial", "how-to", "howto", "promo", "trailer", "bumper")
+                    .any { lower.contains(it) }
+            ) return
             if (directVideoExtRegex.containsMatchIn(resolved) && !media.contains(resolved)) {
                 media.add(resolved)
             }

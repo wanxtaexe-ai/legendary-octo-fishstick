@@ -36,9 +36,7 @@ class HttpFastPathResolver(private val network: NetworkClient) {
 
         private val deadHosts = listOf(
             "asurasever.cloud",
-            "hindidubbedanime.com",
-            "srnky.com",
-            "shrinkearn.com"
+            "hindidubbedanime.com"
         )
 
         private val challengeMarkers = listOf(
@@ -63,6 +61,8 @@ class HttpFastPathResolver(private val network: NetworkClient) {
         private val interactiveGateHints = listOf(
             "hsalinks.",
             "shortsync.epdexx.com",
+            "srnky.com",
+            "shrinkearn.com",
             "7k29m4n8q",
             "shrinkme.",
             "tpi.li",
@@ -163,6 +163,18 @@ class HttpFastPathResolver(private val network: NetworkClient) {
 
         // Direct host extractors
         extractFromKnownHost(normalizedStart, initialReferer, trace, wantDownload)?.let { return it }
+
+        // Interactive shorteners/gates must execute directly inside the browser sandbox so
+        // referrer headers, cookies, and anti-bypass checks remain intact end-to-end.
+        if (interactiveGateHints.any { normalizedStart.lowercase().contains(it) }) {
+            trace.add("Interactive shortener gate -> opening hardened sandbox directly")
+            return FastPathResult.NeedsHardenedWebView(
+                normalizedStart,
+                initialReferer,
+                trace,
+                "interactive_gate_direct"
+            )
+        }
 
         // Multi-hop HTTP ad-chain traversal
         trace.add("Tracing HTTP chain: ${summarizeUrl(normalizedStart)}")
@@ -340,6 +352,10 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             if (isKnownDeadUrl(landed)) {
                 trace.add("Gate redirected to parked/dead host: ${summarizeUrl(landed)}")
                 return FastPathResult.Failed("Shortener gate landed on dead host", trace)
+            }
+            if (interactiveGateHints.any { landed.lowercase().contains(it) }) {
+                trace.add("Landed on interactive shortener -> opening hardened sandbox")
+                return FastPathResult.NeedsHardenedWebView(landed, effectiveReferer, trace, "interactive_gate_hop")
             }
 
             val contentType = resp.headers["content-type"].orEmpty().lowercase()
