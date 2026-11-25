@@ -67,6 +67,7 @@ data class ResolvedTarget(
     val userAgent: String,
     val headers: Map<String, String> = emptyMap(),
     val fileNameHint: String? = null,
+    val label: String? = null,
     val isHls: Boolean = false,
     val isZip: Boolean = false,
     val megaKeyHex: String? = null,

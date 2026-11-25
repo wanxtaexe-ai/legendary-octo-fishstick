@@ -132,4 +132,71 @@ class HttpFastPathResolverTest {
         assertEquals(rawLas, webRes.sourceLinkTarget)
         assertEquals(0, webRes.sourceLinkIndex)
     }
+
+    @Test
+    fun zipIntegrityHelpersRejectHtmlAndAcceptPkzip() {
+        val tempDir = Files.createTempDirectory("zip_sig_test").toFile()
+        try {
+            val htmlFakeZip = File(tempDir, "fake.zip")
+            htmlFakeZip.writeText("<!DOCTYPE html><html><body>Blocked</body></html>")
+            assertTrue(ZipExtractor.looksLikeHtmlPayload(htmlFakeZip))
+            assertTrue(!ZipExtractor.isValidZipSignature(htmlFakeZip))
+
+            val validZip = File(tempDir, "real.zip")
+            ZipOutputStream(FileOutputStream(validZip)).use { zos ->
+                zos.putNextEntry(ZipEntry("Ep01.mp4"))
+                zos.write("VIDEO".toByteArray())
+                zos.closeEntry()
+            }
+            assertTrue(!ZipExtractor.looksLikeHtmlPayload(validZip))
+            assertTrue(ZipExtractor.isValidZipSignature(validZip))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun resolvesHubCloudDriveMirrorsViaMockWebServerAndSkipsAds() = runTest {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                return when (request.path) {
+                    "/drive/g991mxga" -> MockResponse().setResponseCode(200).setBody(
+                        """
+                        <html>
+                          <head><title>The.100.Girlfriends.S01.Batch.zip</title></head>
+                          <body>
+                            <a id="download" href="/hubcloud.php?host=fsl&id=123">Generate Direct Download Link</a>
+                            <a href="https://tamasha.core-x.live/checkout?plan=90">Watch Hindi Webseries Now</a>
+                          </body>
+                        </html>
+                        """.trimIndent()
+                    )
+                    "/hubcloud.php?host=fsl&id=123" -> MockResponse().setResponseCode(200).setBody(
+                        """
+                        <html><body>
+                          <a href="https://pixeldrain.com/u/HubTest99">Pixeldrain Server</a>
+                          <a href="https://cdn.example.com/files/The.100.Girlfriends.S01.Batch.zip">Download [FSL Server]</a>
+                          <a href="https://t.me/animechannel">Join Telegram</a>
+                        </body></html>
+                        """.trimIndent()
+                    )
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+        server.start()
+        try {
+            val net = NetworkClient().apply { dohEnabled = false }
+            val resolver = HttpFastPathResolver(net)
+            val trace = mutableListOf<String>()
+            val targets = resolver.resolveHubCloud(server.url("/drive/g991mxga").toString(), null, trace)
+            assertEquals(2, targets.size)
+            assertEquals("https://pixeldrain.com/api/file/HubTest99", targets[0].url)
+            assertEquals("https://cdn.example.com/files/The.100.Girlfriends.S01.Batch.zip", targets[1].url)
+            assertTrue(targets.none { it.url.contains("tamasha") || it.url.contains("t.me") })
+        } finally {
+            server.shutdown()
+        }
+    }
 }

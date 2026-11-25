@@ -320,20 +320,83 @@ class DownloadManagerEngine(
                         }
                     }
 
-                    // Auto-extract ZIP batches
-                    val extractedList = mutableListOf<String>()
-                    if (autoExtractZip && destFile.extension.equals("zip", ignoreCase = true)) {
+                    if (totalBytes > 0L && written < totalBytes) {
                         updateTask(taskId) {
                             it.copy(
-                                status = DownloadStatus.EXTRACTING,
+                                status = DownloadStatus.FAILED,
                                 downloadedBytes = written,
+                                totalBytes = totalBytes,
+                                errorMessage = "Incomplete download (${written} / ${totalBytes} bytes)",
                                 speedBytesPerSec = 0L
                             )
                         }
-                        val outDir = destFile.parentFile ?: rootDownloadDir()
-                        val extractedFiles = ZipExtractor.extractMediaSafely(destFile, outDir)
-                        extractedFiles.forEach { extractedList.add(it.absolutePath) }
-                        if (extractedFiles.isNotEmpty()) {
+                        return@launch
+                    }
+
+                    if (ZipExtractor.looksLikeHtmlPayload(destFile)) {
+                        runCatching { destFile.delete() }
+                        updateTask(taskId) {
+                            it.copy(
+                                status = DownloadStatus.FAILED,
+                                downloadedBytes = 0L,
+                                errorMessage = "Host returned an HTML/error page instead of media",
+                                speedBytesPerSec = 0L
+                            )
+                        }
+                        return@launch
+                    }
+
+                    // Auto-extract ZIP batches with strict integrity verification
+                    val extractedList = mutableListOf<String>()
+                    if (destFile.extension.equals("zip", ignoreCase = true)) {
+                        if (!ZipExtractor.isValidZipSignature(destFile)) {
+                            updateTask(taskId) {
+                                it.copy(
+                                    status = DownloadStatus.FAILED,
+                                    downloadedBytes = written,
+                                    totalBytes = if (totalBytes > 0L) totalBytes else written,
+                                    errorMessage = "Invalid ZIP file (corrupted or non-PKZIP payload — try another mirror)",
+                                    speedBytesPerSec = 0L
+                                )
+                            }
+                            return@launch
+                        }
+                        if (autoExtractZip) {
+                            updateTask(taskId) {
+                                it.copy(
+                                    status = DownloadStatus.EXTRACTING,
+                                    downloadedBytes = written,
+                                    speedBytesPerSec = 0L
+                                )
+                            }
+                            val outDir = destFile.parentFile ?: rootDownloadDir()
+                            val extractedFiles = runCatching {
+                                ZipExtractor.extractMediaSafely(destFile, outDir)
+                            }.getOrElse { err ->
+                                updateTask(taskId) {
+                                    it.copy(
+                                        status = DownloadStatus.FAILED,
+                                        downloadedBytes = written,
+                                        totalBytes = if (totalBytes > 0L) totalBytes else written,
+                                        errorMessage = "ZIP extraction failed: ${err.message ?: "corrupt archive"}",
+                                        speedBytesPerSec = 0L
+                                    )
+                                }
+                                return@launch
+                            }
+                            if (extractedFiles.isEmpty()) {
+                                updateTask(taskId) {
+                                    it.copy(
+                                        status = DownloadStatus.FAILED,
+                                        downloadedBytes = written,
+                                        totalBytes = if (totalBytes > 0L) totalBytes else written,
+                                        errorMessage = "ZIP contained 0 playable video files (empty, corrupt, or unsupported archive)",
+                                        speedBytesPerSec = 0L
+                                    )
+                                }
+                                return@launch
+                            }
+                            extractedFiles.forEach { extractedList.add(it.absolutePath) }
                             runCatching { destFile.delete() }
                         }
                     }

@@ -35,6 +35,8 @@ object DownloadAndSchemeGuard {
         "krakenfiles.com",
         "mediafire.com",
         "mirrored.to",
+        "hubcloud.mov", "hubcloud.dad", "hubcloud.club", "hubcloud.art",
+        "hubcloud.ink", "hubcloud.lol", "hubcloud.one", "hubcdn.fans",
         "drive.google.com", "drive.usercontent.google.com"
     )
 
@@ -136,5 +138,11 @@ object DownloadAndSchemeGuard {
     fun isKnownCloudFileHost(url: String): Boolean {
         val host = runCatching { URI(url).host?.lowercase()?.trimEnd('.') }.getOrNull() ?: return false
         return cloudDownloadHosts.any { d -> host == d || host.endsWith(".$d") }
+    }
+
+    fun isHubCloudHost(url: String): Boolean {
+        val host = runCatching { URI(url).host?.lowercase()?.trimEnd('.') }.getOrNull() ?: return false
+        return host == "hubcloud.mov" || host.startsWith("hubcloud.") || host.endsWith(".hubcloud.mov") ||
+            host == "hubcdn.fans" || host.endsWith(".hubcdn.fans")
     }
 }

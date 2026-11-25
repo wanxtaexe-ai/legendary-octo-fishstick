@@ -63,7 +63,25 @@ object AdFilterPolicy {
         "wpadmngr.com",
         "betterbannerscloud.com",
         "effectivegatecpm.com",
-        "highperformanceformat.com"
+        "highperformanceformat.com",
+        "core-x.live",
+        "tamasha.core-x.live",
+        "1xbet.com",
+        "1xlite.pro",
+        "melbet.com",
+        "mostbet.com",
+        "parimatch.com",
+        "betwinner.com",
+        "pushwhy.com",
+        "alwingulla.com",
+        "thaudray.com",
+        "onclickalgo.com",
+        "propu.sh"
+    )
+
+    private val rotatingBettingAdHostRegex = Regex(
+        """^(?:[a-z0-9-]+\.)?1x(?:lite|bet)[a-z0-9-]*\.[a-z]{2,}$""",
+        RegexOption.IGNORE_CASE
     )
 
     private val videoAdPathRegex = Regex(
@@ -82,7 +100,9 @@ object AdFilterPolicy {
     }
 
     fun isAdHost(host: String): Boolean {
-        return generateSequence(host.lowercase()) { h ->
+        val lower = host.lowercase()
+        if (rotatingBettingAdHostRegex.matches(lower)) return true
+        return generateSequence(lower) { h ->
             h.substringAfter('.', "").takeIf { it.contains('.') }
         }.any { it in adHosts }
     }
