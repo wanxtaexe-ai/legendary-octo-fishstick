@@ -22,7 +22,9 @@ sealed class FastPathResult {
         val gateUrl: String,
         val referer: String?,
         val trace: List<String>,
-        val reason: String
+        val reason: String,
+        val sourceLinkTarget: String? = null,
+        val sourceLinkIndex: Int = -1
     ) : FastPathResult()
     data class Failed(val reason: String, val trace: List<String>) : FastPathResult()
 }
@@ -134,16 +136,22 @@ class HttpFastPathResolver(private val network: NetworkClient) {
         }
     }
 
-    suspend fun resolve(startUrl: String, initialReferer: String?, wantDownload: Boolean = true): FastPathResult {
+    suspend fun resolve(
+        startUrl: String,
+        initialReferer: String?,
+        wantDownload: Boolean = true,
+        sourceLinkIndex: Int = -1
+    ): FastPathResult {
         val trace = mutableListOf<String>()
-        val safety = DownloadAndSchemeGuard.inspectUrl(startUrl)
+        val candidateStart = DownloadAndSchemeGuard.unwrapIntentUrl(startUrl) ?: startUrl
+        val safety = DownloadAndSchemeGuard.inspectUrl(candidateStart)
         if (safety != DownloadAndSchemeGuard.UrlSafety.SAFE_HTTP_OR_HTTPS) {
             trace.add("Blocked unsafe URL scheme or executable: $startUrl")
             return FastPathResult.Failed("Blocked unsafe URL", trace)
         }
 
-        val unwrapped = unwrapTokenUrl(startUrl) ?: startUrl
-        if (unwrapped != startUrl) {
+        val unwrapped = unwrapTokenUrl(candidateStart) ?: candidateStart
+        if (unwrapped != candidateStart) {
             trace.add("Decoded wrapper -> ${summarizeUrl(unwrapped)}")
         }
         val normalizedStart = normalizeTpxPlayerUrl(unwrapped)
@@ -158,6 +166,24 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             return FastPathResult.Resolved(
                 listOf(buildResolvedTarget(normalizedStart, initialReferer, trace = trace)),
                 trace
+            )
+        }
+
+        // LordsAnime puts raw las.epdexx.com links in HTML and rewrites them client-side to
+        // shortsync.epdexx.com/go/...; opening las.epdexx.com directly triggers error.epdexx.com.
+        if (normalizedStart.contains("epdexx.com/", ignoreCase = true) &&
+            !normalizedStart.contains("shortsync.", ignoreCase = true) &&
+            !initialReferer.isNullOrBlank() &&
+            initialReferer.contains("lordsanime.", ignoreCase = true)
+        ) {
+            trace.add("Loading LordsAnime post so its shortener script wraps epdexx link...")
+            return FastPathResult.NeedsHardenedWebView(
+                gateUrl = initialReferer,
+                referer = initialReferer,
+                trace = trace,
+                reason = "epdexx_needs_shortener_wrap",
+                sourceLinkTarget = normalizedStart,
+                sourceLinkIndex = sourceLinkIndex
             )
         }
 

@@ -40,6 +40,33 @@ object AdChainDomScripts {
   document.addEventListener('DOMContentLoaded', cleanOverlays);
   setTimeout(cleanOverlays, 1200);
   setTimeout(cleanOverlays, 3500);
+
+  if (location && location.hostname && location.hostname.indexOf('lordsanime') >= 0) {
+    try {
+      var obs = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            var n = added[j];
+            if (n.nodeType !== 1) continue;
+            if (n.tagName === 'A') {
+              var h = n.getAttribute('href') || '';
+              if (h.indexOf('epdexx.com') >= 0 && !n.dataset.origHref) n.dataset.origHref = h;
+            } else if (n.querySelectorAll) {
+              var as = n.querySelectorAll('a[href*="epdexx.com"]');
+              for (var k = 0; k < as.length; k++) {
+                var ah = as[k].getAttribute('href') || '';
+                if (!as[k].dataset.origHref) as[k].dataset.origHref = ah;
+              }
+            }
+          }
+        }
+      });
+      if (document.documentElement) {
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+      }
+    } catch (_) {}
+  }
 })();
 """
 

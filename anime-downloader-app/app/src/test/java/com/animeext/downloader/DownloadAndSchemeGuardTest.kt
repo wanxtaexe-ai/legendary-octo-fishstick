@@ -16,6 +16,18 @@ class DownloadAndSchemeGuardTest {
             DownloadAndSchemeGuard.inspectUrl("intent://scan/#Intent;scheme=zxing;end")
         )
         assertEquals(
+            null,
+            DownloadAndSchemeGuard.unwrapIntentUrl("intent://scan/#Intent;scheme=zxing;end")
+        )
+        assertEquals(
+            "https://liteshort.com/st?api=3b4b20f9fece2b3004005169307f031aa4",
+            DownloadAndSchemeGuard.unwrapIntentUrl("intent://liteshort.com/st?api=3b4b20f9fece2b3004005169307f031aa4")
+        )
+        assertEquals(
+            "https://strictstrategies.com/now.php?link=qQNgvGZ",
+            DownloadAndSchemeGuard.unwrapIntentUrl("intent://strictstrategies.com/now.php?link=qQNgvGZ#Intent;scheme=https;package=com.android.chrome;end")
+        )
+        assertEquals(
             DownloadAndSchemeGuard.UrlSafety.BLOCKED_UNSAFE_SCHEME,
             DownloadAndSchemeGuard.inspectUrl("market://details?id=com.scam.app")
         )

@@ -64,6 +64,46 @@ object DownloadAndSchemeGuard {
         return UrlSafety.SAFE_HTTP_OR_HTTPS
     }
 
+    fun unwrapIntentUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim()
+        if (!trimmed.startsWith("intent://", ignoreCase = true)) return null
+        val bodyAndMeta = trimmed.substring("intent://".length)
+        val metaIdx = bodyAndMeta.indexOf("#Intent;", ignoreCase = true)
+        val hostAndPath = if (metaIdx >= 0) bodyAndMeta.substring(0, metaIdx) else bodyAndMeta
+        val meta = if (metaIdx >= 0) bodyAndMeta.substring(metaIdx + "#Intent;".length) else ""
+
+        var scheme: String? = null
+        var fallbackUrl: String? = null
+        for (part in meta.split(';')) {
+            when {
+                part.startsWith("scheme=", ignoreCase = true) ->
+                    scheme = part.substringAfter('=').trim().lowercase()
+                part.startsWith("S.browser_fallback_url=", ignoreCase = true) ->
+                    fallbackUrl = runCatching {
+                        URLDecoder.decode(part.substringAfter('='), "UTF-8")
+                    }.getOrNull()?.trim()
+            }
+        }
+
+        if (scheme != null && scheme != "http" && scheme != "https") {
+            if (!fallbackUrl.isNullOrBlank() && inspectUrl(fallbackUrl) == UrlSafety.SAFE_HTTP_OR_HTTPS) {
+                return fallbackUrl
+            }
+            return null
+        }
+
+        if (!fallbackUrl.isNullOrBlank() && hostAndPath.isBlank() &&
+            inspectUrl(fallbackUrl) == UrlSafety.SAFE_HTTP_OR_HTTPS
+        ) {
+            return fallbackUrl
+        }
+
+        val effectiveScheme = scheme ?: "https"
+        if (hostAndPath.isBlank()) return null
+        val reconstructed = "$effectiveScheme://$hostAndPath"
+        return reconstructed.takeIf { inspectUrl(it) == UrlSafety.SAFE_HTTP_OR_HTTPS }
+    }
+
     fun isBlockedMimeType(mimeType: String?): Boolean {
         val normalized = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
         if (normalized.isEmpty()) return false

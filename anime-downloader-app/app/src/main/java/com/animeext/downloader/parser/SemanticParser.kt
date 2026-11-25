@@ -275,6 +275,7 @@ object SemanticParser {
             return key
         }
 
+        val epdexxAnchors = doc.select("a[href*=\"epdexx.com\"]")
         val anchorRegex = Regex("<a\\b[^>]*>[\\s\\S]*?</a>", RegexOption.IGNORE_CASE)
 
         for (el in contentRoot.select("h1, h2, h3, h4, h5, p, li, div")) {
@@ -347,6 +348,7 @@ object SemanticParser {
                     }
 
                     val streams = episodesMap[epKey] ?: return@forEachIndexed
+                    val epdexxIdx = epdexxAnchors.indexOf(a)
                     if (streams.none { it.url == resolvedUrl && it.quality == effectiveQ.first }) {
                         streams.add(
                             StreamOption(
@@ -355,7 +357,8 @@ object SemanticParser {
                                 hostLabel = linkText.ifBlank { "Link" },
                                 url = resolvedUrl,
                                 isDirectVideo = directVideoExtRegex.containsMatchIn(resolvedUrl),
-                                referer = baseUrl
+                                referer = baseUrl,
+                                sourceLinkIndex = epdexxIdx
                             )
                         )
                     }
