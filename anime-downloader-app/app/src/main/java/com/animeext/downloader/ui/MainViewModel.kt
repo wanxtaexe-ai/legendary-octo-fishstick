@@ -226,7 +226,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            when (val fast = app.httpFastPath.resolve(option.url, option.referer, wantDownload = wantDownload)) {
+            when (val fast = app.httpFastPath.resolve(option.url, option.referer, wantDownload = wantDownload, sourceLinkIndex = option.sourceLinkIndex)) {
                 is FastPathResult.Resolved -> {
                     handleResolvedTargets(seriesTitle, episodeLabel, wantDownload, fast.targets, fast.trace, 0)
                 }
@@ -243,6 +243,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         gateUrl = fast.gateUrl,
                         referer = fast.referer,
                         initialTrace = fast.trace,
+                        sourceLinkTarget = fast.sourceLinkTarget,
+                        sourceLinkIndex = fast.sourceLinkIndex,
                         onSandboxStateChanged = { sbState ->
                             _ui.update { st ->
                                 st.copy(

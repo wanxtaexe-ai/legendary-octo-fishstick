@@ -118,4 +118,18 @@ class HttpFastPathResolverTest {
             assertTrue("Expected NeedsHardenedWebView for $gate, got $res", res is FastPathResult.NeedsHardenedWebView)
         }
     }
+
+    @Test
+    fun rawLordsAnimeEpdexxEscalatesToPostPageForJsWrapping() = runTest {
+        val net = NetworkClient().apply { dohEnabled = false }
+        val resolver = HttpFastPathResolver(net)
+        val postUrl = "https://www.lordsanime.com/kizumonogatari-part-1/"
+        val rawLas = "https://las.epdexx.com/0:/3.%20HSA%20Anime/Monogatari"
+        val res = resolver.resolve(rawLas, postUrl, sourceLinkIndex = 0)
+        assertTrue("Expected NeedsHardenedWebView, got $res", res is FastPathResult.NeedsHardenedWebView)
+        val webRes = res as FastPathResult.NeedsHardenedWebView
+        assertEquals(postUrl, webRes.gateUrl)
+        assertEquals(rawLas, webRes.sourceLinkTarget)
+        assertEquals(0, webRes.sourceLinkIndex)
+    }
 }

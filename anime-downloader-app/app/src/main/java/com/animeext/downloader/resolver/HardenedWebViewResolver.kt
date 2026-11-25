@@ -64,7 +64,9 @@ class HardenedWebViewResolver(
         referer: String?,
         initialTrace: List<String>,
         onSandboxStateChanged: (GateSandboxState) -> Unit,
-        timeoutMs: Long = 90_000L
+        timeoutMs: Long = 90_000L,
+        sourceLinkTarget: String? = null,
+        sourceLinkIndex: Int = -1
     ): SandboxResolutionResult {
         val trace = initialTrace.toMutableList()
         val blockedCount = AtomicInteger(0)
@@ -84,6 +86,8 @@ class HardenedWebViewResolver(
 
                 var humanSurfaceShown = false
                 val activePageUrl = AtomicReference(gateUrl)
+                var pendingWrappedTarget = sourceLinkTarget
+                val pendingWrappedIndex = sourceLinkIndex
 
             fun notifyUi(visible: Boolean, url: String, challengeKind: String? = null) {
                 if (disposed.get()) return
@@ -359,27 +363,55 @@ class HardenedWebViewResolver(
                         if (disposed.get()) return true
                         val req = request ?: return false
                         if (!req.isForMainFrame) return false
-                        val target = req.url?.toString() ?: return true
+                        val rawTarget = req.url?.toString() ?: return true
+                        val currentPage = runCatching { view?.url }.getOrNull() ?: gateUrl
+
+                        if (rawTarget.startsWith("intent://", ignoreCase = true)) {
+                            val unwrappedIntent = DownloadAndSchemeGuard.unwrapIntentUrl(rawTarget)
+                            if (unwrappedIntent != null) {
+                                val intentDecision = AdFilterPolicy.decideMainFrameNavigation(
+                                    currentUrl = currentPage,
+                                    targetUrl = unwrappedIntent,
+                                    hasUserGesture = req.hasGesture(),
+                                    isRedirect = req.isRedirect
+                                )
+                                if (intentDecision != AdFilterPolicy.NavigationDecision.ALLOW) {
+                                    blockedCount.incrementAndGet()
+                                    trace.add("Blocked ${intentDecision.name}: ${unwrappedIntent.take(64)}")
+                                    return true
+                                }
+                                trace.add("Unwrapped intent:// -> ${unwrappedIntent.take(64)}")
+                                if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(unwrappedIntent) ||
+                                    DownloadAndSchemeGuard.isKnownCloudFileHost(unwrappedIntent)
+                                ) {
+                                    completeWithDestination(unwrappedIntent, currentPage)
+                                } else {
+                                    activePageUrl.set(unwrappedIntent)
+                                    view?.loadUrl(unwrappedIntent, refererHeader(currentPage))
+                                }
+                                return true
+                            }
+                        }
 
                         val decision = AdFilterPolicy.decideMainFrameNavigation(
-                            currentUrl = runCatching { view?.url }.getOrNull(),
-                            targetUrl = target,
+                            currentUrl = currentPage,
+                            targetUrl = rawTarget,
                             hasUserGesture = req.hasGesture(),
                             isRedirect = req.isRedirect
                         )
                         if (decision != AdFilterPolicy.NavigationDecision.ALLOW) {
                             blockedCount.incrementAndGet()
-                            trace.add("Blocked ${decision.name}: ${target.take(64)}")
+                            trace.add("Blocked ${decision.name}: ${rawTarget.take(64)}")
                             return true
                         }
 
-                        if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(target) ||
-                            DownloadAndSchemeGuard.isKnownCloudFileHost(target)
+                        if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(rawTarget) ||
+                            DownloadAndSchemeGuard.isKnownCloudFileHost(rawTarget)
                         ) {
-                            completeWithDestination(target, runCatching { view?.url }.getOrNull() ?: gateUrl)
+                            completeWithDestination(rawTarget, currentPage)
                             return true
                         }
-                        activePageUrl.set(target)
+                        activePageUrl.set(rawTarget)
                         return false
                     }
 
@@ -393,6 +425,9 @@ class HardenedWebViewResolver(
                             notifyUi(visible = true, url = landed, challengeKind = "epdexx_error")
                             return
                         }
+                        if (landed.contains("las.epdexx.com", ignoreCase = true)) {
+                            humanSurfaceShown = true
+                        }
                         notifyUi(visible = humanSurfaceShown, url = landed)
 
                         if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(landed) ||
@@ -401,6 +436,58 @@ class HardenedWebViewResolver(
                             completeWithDestination(landed, landed)
                             return
                         }
+
+                        if (pendingWrappedTarget != null && landed.contains("lordsanime.", ignoreCase = true)) {
+                            fun tryLocateWrapped(attempt: Int) {
+                                if (disposed.get() || result.isCompleted || pendingWrappedTarget == null) return
+                                val targetJson = JSONObject.quote(pendingWrappedTarget)
+                                val js = """
+                                    (function(){
+                                      var tgt = $targetJson;
+                                      var idx = $pendingWrappedIndex;
+                                      var all = document.querySelectorAll('a[href*="epdexx.com"], a[href*="srnky.com"], a[href*="shrinkearn.com"]');
+                                      for (var i = 0; i < all.length; i++) {
+                                        var a = all[i];
+                                        var orig = a.dataset && a.dataset.origHref ? a.dataset.origHref : '';
+                                        if (orig === tgt && a.href && a.href !== tgt) return a.href;
+                                      }
+                                      if (idx >= 0 && idx < all.length) {
+                                        var candidate = all[idx].href || '';
+                                        if (candidate.indexOf('shortsync.epdexx.com') >= 0 || candidate.indexOf('srnky.com') >= 0 || candidate.indexOf('shrinkearn.com') >= 0) {
+                                          return candidate;
+                                        }
+                                      }
+                                      for (var j = 0; j < all.length; j++) {
+                                        var h = all[j].href || '';
+                                        if (h.indexOf('shortsync.epdexx.com') >= 0 || h.indexOf('srnky.com') >= 0 || h.indexOf('shrinkearn.com') >= 0) {
+                                          return h;
+                                        }
+                                      }
+                                      return '';
+                                    })();
+                                """.trimIndent()
+                                web.evaluateJavascript(js) { raw ->
+                                    if (disposed.get() || result.isCompleted || pendingWrappedTarget == null) return@evaluateJavascript
+                                    val found = runCatching { JSONObject("{\"v\":$raw}").getString("v") }.getOrNull().orEmpty()
+                                    if (found.startsWith("http")) {
+                                        pendingWrappedTarget = null
+                                        trace.add("LordsAnime wrapped -> ${found.take(64)}")
+                                        activePageUrl.set(found)
+                                        web.loadUrl(found, refererHeader(landed))
+                                    } else if (attempt >= 2) {
+                                        pendingWrappedTarget = null
+                                        humanSurfaceShown = true
+                                        trace.add("Please tap the LAS Link button inside the sandbox")
+                                        notifyUi(visible = true, url = landed)
+                                    }
+                                }
+                            }
+                            tryLocateWrapped(0)
+                            mainHandler.postDelayed({ tryLocateWrapped(1) }, 1200L)
+                            mainHandler.postDelayed({ tryLocateWrapped(2) }, 2800L)
+                            return
+                        }
+
                         pollDomStage()
                         mainHandler.postDelayed({ pollDomStage() }, 1500L)
                         mainHandler.postDelayed({ pollDomStage() }, 3500L)

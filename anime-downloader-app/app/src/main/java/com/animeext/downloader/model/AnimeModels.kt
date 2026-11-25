@@ -35,7 +35,8 @@ data class StreamOption(
     val hostLabel: String = "Link",
     val url: String,
     val isDirectVideo: Boolean = false,
-    val referer: String? = null
+    val referer: String? = null,
+    val sourceLinkIndex: Int = -1
 )
 
 data class EpisodeEntry(
