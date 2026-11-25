@@ -260,8 +260,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 seriesTitle,
                                 episodeLabel,
                                 wantDownload,
-                                listOf(sandboxRes.target),
-                                sandboxRes.target.trace,
+                                sandboxRes.targets,
+                                sandboxRes.targets.firstOrNull()?.trace ?: emptyList(),
                                 sandboxRes.blockedCount
                             )
                         }
@@ -390,6 +390,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun launchBuiltInPlayer(uriOrPath: String, title: String, headers: Map<String, String> = emptyMap()) {
+        val ext = uriOrPath.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase()
+        if (ext in setOf("zip", "rar", "7z")) {
+            _ui.update { it.copy(statusBanner = "Cannot play unextracted .$ext archive directly") }
+            return
+        }
         val intent = PlayerActivity.createIntent(app, uriOrPath, title, headers).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

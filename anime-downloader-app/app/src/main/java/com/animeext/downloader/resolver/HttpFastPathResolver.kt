@@ -308,6 +308,15 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             }
         }
 
+        // 7c. HubCloud (/drive/... or hubcdn.fans)
+        if (DownloadAndSchemeGuard.isHubCloudHost(url)) {
+            trace.add("Extracting HubCloud mirrors...")
+            val hcTargets = resolveHubCloud(url, referer, trace)
+            if (hcTargets.isNotEmpty()) {
+                return FastPathResult.Resolved(hcTargets, trace)
+            }
+        }
+
         // 8. Kiranime /watch/ page
         if (lower.contains("/watch/")) {
             trace.add("Inspecting watch page embeds...")
@@ -1096,6 +1105,112 @@ class HttpFastPathResolver(private val network: NetworkClient) {
                 out.add(buildResolvedTarget(fileUrl, folderUrl, fileNameHint = name, trace = trace))
             }
         }
+        return out
+    }
+
+    internal suspend fun resolveHubCloud(
+        url: String,
+        referer: String?,
+        trace: MutableList<String>
+    ): List<ResolvedTarget> {
+        val resp = runCatching { network.get(url, referer = referer) }.getOrNull() ?: return emptyList()
+        if (resp.code !in 200..299 || resp.body.isBlank()) return emptyList()
+
+        val firstDoc = Jsoup.parse(resp.body, resp.url)
+        val pageFileName = firstDoc.selectFirst(".card-header, h4, h3, title")
+            ?.text()
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeIf {
+                it.isNotBlank() &&
+                    !it.contains("hubcloud", true) &&
+                    it.contains('.') &&
+                    it.length <= 120
+            }
+
+        // Step 1: Check if HubCloud /drive/<id> points to a generator link (hubcloud.php / gamerxyt / hubcdn)
+        var mirrorDoc = firstDoc
+        var mirrorBaseUrl = resp.url
+        val genHref = firstDoc.select("a#download[href], a[href*=\"hubcloud.php\"], a[href*=\"gamerxyt\"], a[href]")
+            .firstOrNull { a ->
+                val txt = a.text().trim().lowercase()
+                val href = SemanticParser.resolveUrl(a.attr("href"), resp.url).orEmpty()
+                val host = AdFilterPolicy.hostOf(href)
+                href.startsWith("http") &&
+                    (host == null || !AdFilterPolicy.isAdHost(host)) &&
+                    (
+                        a.id().equals("download", true) ||
+                            href.contains("hubcloud.php", true) ||
+                            href.contains("gamerxyt", true) ||
+                            txt.contains("generate direct download link")
+                        )
+            }
+            ?.let { SemanticParser.resolveUrl(it.attr("href"), resp.url) }
+            ?: Regex("""(?:var|let|const)\s+url\s*=\s*['"](https?://[^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                .find(resp.body)?.groupValues?.get(1)
+
+        if (!genHref.isNullOrBlank() && genHref != resp.url) {
+            trace.add("HubCloud generator -> ${summarizeUrl(genHref)}")
+            val genResp = runCatching { network.get(genHref, referer = resp.url) }.getOrNull()
+            if (genResp != null && genResp.code in 200..299 && genResp.body.isNotBlank()) {
+                mirrorDoc = Jsoup.parse(genResp.body, genResp.url)
+                mirrorBaseUrl = genResp.url
+            }
+        }
+
+        // Step 2: Collect direct mirrors (Pixeldrain, GoFile, FSL, HubCDN, ZipDisk, 10Gbps, direct media/zip)
+        val out = mutableListOf<ResolvedTarget>()
+        val seenUrls = hashSetOf<String>()
+        for (a in mirrorDoc.select("a[href]")) {
+            val resolved = SemanticParser.resolveUrl(a.attr("href"), mirrorBaseUrl) ?: continue
+            if (!resolved.startsWith("http") || resolved == mirrorBaseUrl || resolved == resp.url) continue
+            if (DownloadAndSchemeGuard.inspectUrl(resolved) != DownloadAndSchemeGuard.UrlSafety.SAFE_HTTP_OR_HTTPS) continue
+            val host = AdFilterPolicy.hostOf(resolved)
+            if (host != null && AdFilterPolicy.isAdHost(host)) continue
+            val lowerResolved = resolved.lowercase()
+            if (lowerResolved.contains("t.me/") || lowerResolved.contains("telegram.") ||
+                lowerResolved.contains("/drive/") || lowerResolved.contains("login") ||
+                lowerResolved.contains("register")
+            ) {
+                continue
+            }
+
+            val btnText = a.text().replace(Regex("\\s+"), " ").trim()
+            val lowerBtn = btnText.lowercase()
+
+            normalizePixeldrainUrl(resolved)?.let { pdApi ->
+                if (seenUrls.add(pdApi)) {
+                    trace.add("HubCloud -> Pixeldrain")
+                    out.add(
+                        buildResolvedTarget(pdApi, mirrorBaseUrl, fileNameHint = pageFileName, trace = trace)
+                            .copy(label = "Pixeldrain${pageFileName?.let { " · $it" } ?: ""}")
+                    )
+                }
+                continue
+            }
+
+            if (lowerResolved.contains("gofile.io/d/")) {
+                val gf = resolveGoFile(resolved, trace)
+                gf.filter { seenUrls.add(it.url) }.forEach {
+                    out.add(it.copy(label = "GoFile · ${it.fileNameHint ?: pageFileName ?: "Download"}"))
+                }
+                continue
+            }
+
+            val looksLikeMirrorButton = DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(resolved) ||
+                listOf("fsl", "10gbps", "zipdisk", "hubcdn", "buzzheavier", "direct", "gpdl", "download", "server")
+                    .any { lowerBtn.contains(it) || lowerResolved.contains(it) }
+
+            if (looksLikeMirrorButton && seenUrls.add(resolved)) {
+                val mirrorName = btnText.ifBlank { host ?: "Direct Mirror" }
+                trace.add("HubCloud mirror ($mirrorName) -> ${summarizeUrl(resolved)}")
+                out.add(
+                    buildResolvedTarget(resolved, mirrorBaseUrl, fileNameHint = pageFileName, trace = trace)
+                        .copy(label = "$mirrorName${pageFileName?.let { " · $it" } ?: ""}")
+                )
+            }
+        }
+
         return out
     }
 

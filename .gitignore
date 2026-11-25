@@ -7,3 +7,10 @@ build/
 local.properties
 .DS_Store
 coverage/
+.agents/
+.claude/
+.skills/
+agent/
+skills-lock.json
+AGENTS.md
+CLAUDE.md

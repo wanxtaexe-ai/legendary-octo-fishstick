@@ -125,6 +125,53 @@ object AdChainDomScripts {
       return JSON.stringify({ stage: 'safelink_form' });
     }
 
+    // Post-captcha / countdown CTA auto-progression (only visible, enabled, non-waiting controls)
+    var ctaExact = [
+      'continue', 'continue...', 'click here to continue', 'verify', 'human verify',
+      'get link', 'go to link', 'download file', 'download now',
+      'generate direct download link', 'proceed', 'unlock link', 'submit'
+    ];
+    var candidates = document.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]');
+    for (var c = 0; c < candidates.length; c++) {
+      var el = candidates[c];
+      if (el.disabled || el.classList.contains('disabled') || el.getAttribute('aria-disabled') === 'true') continue;
+      if (el.dataset && el.dataset.avClicked === '1') continue;
+      var cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') < 0.2) continue;
+      if (el.offsetWidth <= 0 || el.offsetHeight <= 0) continue;
+
+      var rawTxt = ((el.innerText || el.value || '') + '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!rawTxt || rawTxt.length > 48) continue;
+      if (rawTxt.indexOf('wait') >= 0 || rawTxt.indexOf('loading') >= 0 || rawTxt.indexOf('second') >= 0) continue;
+
+      var matched = false;
+      for (var t = 0; t < ctaExact.length; t++) {
+        if (rawTxt === ctaExact[t]) { matched = true; break; }
+      }
+      if (!matched) continue;
+
+      if (el.tagName === 'A') {
+        var aHref = (el.href || '').trim();
+        var aLower = aHref.toLowerCase();
+        if (!/^https?:/i.test(aHref)) continue;
+        if (aLower.indexOf('tryedesign.') >= 0 || aLower.indexOf('rvpaste.') >= 0 ||
+            aLower.indexOf('core-x.live') >= 0 || aLower.indexOf('1xlite') >= 0 ||
+            aLower.indexOf('1xbet') >= 0 || aLower.indexOf('t.me/') >= 0 ||
+            aLower.indexOf('telegram.') >= 0) {
+          continue;
+        }
+        el.dataset.avClicked = '1';
+        return JSON.stringify({ stage: 'next_anchor', url: aHref });
+      } else {
+        el.dataset.avClicked = '1';
+        setTimeout(function(node) {
+          return function() { try { delete node.dataset.avClicked; } catch (_) {} };
+        }(el), 4500);
+        el.click();
+        return JSON.stringify({ stage: 'auto_clicked', label: rawTxt });
+      }
+    }
+
     var isGateOrTutorialPage = !!(
       goForm || tpForm || nextAnchor || hasTurnstile || hasRecaptcha || hasHcaptcha ||
       document.querySelector('#nextPage, a.get-link, #btn-get-link, #get-link-btn') ||

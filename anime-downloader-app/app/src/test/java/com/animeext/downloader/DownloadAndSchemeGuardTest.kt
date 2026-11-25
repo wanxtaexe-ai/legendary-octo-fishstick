@@ -88,6 +88,16 @@ class DownloadAndSchemeGuardTest {
             AdFilterPolicy.NavigationDecision.ALLOW,
             AdFilterPolicy.decideMainFrameNavigation("https://srnky.com/EA7epdFz", "https://las.epdexx.com/0:/folder/", hasUserGesture = false, isRedirect = false)
         )
+        assertEquals(
+            AdFilterPolicy.NavigationDecision.BLOCK_POPUP_OR_AD,
+            AdFilterPolicy.decideMainFrameNavigation("https://hubcloud.mov/drive/abc", "https://tamasha.core-x.live/checkout?p=1", hasUserGesture = true, isRedirect = false)
+        )
+        assertEquals(
+            AdFilterPolicy.NavigationDecision.BLOCK_POPUP_OR_AD,
+            AdFilterPolicy.decideMainFrameNavigation("https://loanbixby.com/", "https://1xlite-12669.pro/en", hasUserGesture = false, isRedirect = true)
+        )
+        assertTrue(DownloadAndSchemeGuard.isHubCloudHost("https://hubcloud.mov/drive/g991mxga"))
+        assertTrue(DownloadAndSchemeGuard.isKnownCloudFileHost("https://hubcloud.mov/drive/g991mxga"))
     }
 
     @Test

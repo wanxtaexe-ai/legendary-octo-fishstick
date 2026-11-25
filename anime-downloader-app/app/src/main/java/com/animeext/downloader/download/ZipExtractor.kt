@@ -12,6 +12,40 @@ object ZipExtractor {
         "mp4", "mkv", "webm", "avi", "mov", "m4v", "srt", "ass", "vtt"
     )
 
+    fun isValidZipSignature(file: File): Boolean {
+        if (!file.exists() || !file.isFile || file.length() < 4L) return false
+        return runCatching {
+            FileInputStream(file).use { fis ->
+                val header = ByteArray(4)
+                if (fis.read(header) < 4) return@use false
+                header[0] == 0x50.toByte() &&
+                    header[1] == 0x4B.toByte() &&
+                    (
+                        (header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) ||
+                            (header[2] == 0x05.toByte() && header[3] == 0x06.toByte()) ||
+                            (header[2] == 0x07.toByte() && header[3] == 0x08.toByte())
+                        )
+            }
+        }.getOrDefault(false)
+    }
+
+    fun looksLikeHtmlPayload(file: File): Boolean {
+        if (!file.exists() || !file.isFile || file.length() == 0L) return false
+        return runCatching {
+            FileInputStream(file).use { fis ->
+                val buf = ByteArray(minOf(512L, file.length()).toInt())
+                val read = fis.read(buf)
+                if (read <= 0) return@use false
+                val head = String(buf, 0, read, Charsets.UTF_8).trimStart().lowercase()
+                head.startsWith("<!doctype") ||
+                    head.startsWith("<html") ||
+                    head.startsWith("<head") ||
+                    head.startsWith("<script") ||
+                    head.startsWith("<?xml")
+            }
+        }.getOrDefault(false)
+    }
+
     /**
      * Extracts media and subtitle files from [zipFile] into [destDir], rejecting any
      * Zip-Slip path traversal entries (`../`). Returns extracted file paths.

@@ -25,7 +25,11 @@ import com.animeext.downloader.model.ResolvedTarget
 import com.animeext.downloader.network.InMemorySessionCookieJar
 import com.animeext.downloader.network.NetworkClient
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -36,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 sealed class SandboxResolutionResult {
-    data class Captured(val target: ResolvedTarget, val blockedCount: Int) : SandboxResolutionResult()
+    data class Captured(val targets: List<ResolvedTarget>, val blockedCount: Int) : SandboxResolutionResult()
     data class Cancelled(val blockedCount: Int, val trace: List<String>) : SandboxResolutionResult()
     data class Failed(val reason: String, val blockedCount: Int, val trace: List<String>) : SandboxResolutionResult()
 }
@@ -47,7 +51,10 @@ data class GateSandboxState(
     val currentUrl: String = "",
     val challengeKind: String? = null,
     val blockedCount: Int = 0,
+    val canGoBack: Boolean = false,
     val onForceShow: () -> Unit = {},
+    val onGoBack: () -> Unit = {},
+    val onReload: () -> Unit = {},
     val onCancel: () -> Unit = {}
 )
 
@@ -64,12 +71,13 @@ class HardenedWebViewResolver(
         referer: String?,
         initialTrace: List<String>,
         onSandboxStateChanged: (GateSandboxState) -> Unit,
-        timeoutMs: Long = 90_000L,
+        timeoutMs: Long = 180_000L,
         sourceLinkTarget: String? = null,
         sourceLinkIndex: Int = -1
     ): SandboxResolutionResult {
         val trace = initialTrace.toMutableList()
         val blockedCount = AtomicInteger(0)
+        val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         val capturedResult = withContext(Dispatchers.Main) {
             val result = CompletableDeferred<SandboxResolutionResult>()
@@ -84,25 +92,47 @@ class HardenedWebViewResolver(
                 )
             }
 
-                var humanSurfaceShown = false
-                val activePageUrl = AtomicReference(gateUrl)
-                var pendingWrappedTarget = sourceLinkTarget
-                val pendingWrappedIndex = sourceLinkIndex
+            var humanSurfaceShown = false
+            val activePageUrl = AtomicReference(gateUrl)
+            var pendingWrappedTarget = sourceLinkTarget
+            val pendingWrappedIndex = sourceLinkIndex
 
             fun notifyUi(visible: Boolean, url: String, challengeKind: String? = null) {
-                if (disposed.get()) return
+                if (disposed.get() || result.isCompleted) return
                 if (visible) humanSurfaceShown = true
+                val canBack = runCatching { web.canGoBack() }.getOrDefault(false)
                 onSandboxStateChanged(
                     GateSandboxState(
-                        webView = if (disposed.get()) null else web,
+                        webView = web,
                         visibleToUser = visible,
                         currentUrl = url,
                         challengeKind = challengeKind,
                         blockedCount = blockedCount.get(),
+                        canGoBack = canBack,
                         onForceShow = {
                             if (!disposed.get() && !result.isCompleted) {
                                 humanSurfaceShown = true
                                 notifyUi(visible = true, url = runCatching { web.url }.getOrNull() ?: url)
+                            }
+                        },
+                        onGoBack = {
+                            if (!disposed.get() && !result.isCompleted) {
+                                mainHandler.post {
+                                    if (!disposed.get() && runCatching { web.canGoBack() }.getOrDefault(false)) {
+                                        web.goBack()
+                                        notifyUi(
+                                            visible = humanSurfaceShown,
+                                            url = runCatching { web.url }.getOrNull() ?: url
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        onReload = {
+                            if (!disposed.get() && !result.isCompleted) {
+                                mainHandler.post {
+                                    if (!disposed.get()) web.reload()
+                                }
                             }
                         },
                         onCancel = {
@@ -183,15 +213,17 @@ class HardenedWebViewResolver(
                     trace.add("Sandbox captured clean destination (${blockedCount.get()} threats blocked)")
                     result.complete(
                         SandboxResolutionResult.Captured(
-                            target = ResolvedTarget(
-                                url = destUrl,
-                                referer = currentPageUrl,
-                                cookies = cookieMap,
-                                userAgent = NetworkClient.CHROME_UA,
-                                headers = headers,
-                                isHls = path.endsWith(".m3u8") || path.endsWith(".m3u"),
-                                isZip = path.endsWith(".zip") || path.endsWith(".rar") || path.endsWith(".7z"),
-                                trace = trace.toList()
+                            targets = listOf(
+                                ResolvedTarget(
+                                    url = destUrl,
+                                    referer = currentPageUrl,
+                                    cookies = cookieMap,
+                                    userAgent = NetworkClient.CHROME_UA,
+                                    headers = headers,
+                                    isHls = path.endsWith(".m3u8") || path.endsWith(".m3u"),
+                                    isZip = path.endsWith(".zip") || path.endsWith(".rar") || path.endsWith(".7z"),
+                                    trace = trace.toList()
+                                )
                             ),
                             blockedCount = blockedCount.get()
                         )
@@ -270,8 +302,20 @@ class HardenedWebViewResolver(
                                     }
                                     notifyUi(visible = true, url = currentUrl, challengeKind = kind)
                                 }
+                                "auto_clicked" -> {
+                                    val lbl = obj.optString("label", "button")
+                                    trace.add("Auto-clicked '$lbl'")
+                                }
                             }
                         }
+                    }
+                }
+
+                val pollRunnable = object : Runnable {
+                    override fun run() {
+                        if (disposed.get() || result.isCompleted) return
+                        pollDomStage()
+                        mainHandler.postDelayed(this, 1200L)
                     }
                 }
 
@@ -334,7 +378,10 @@ class HardenedWebViewResolver(
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        if (!url.isNullOrBlank()) activePageUrl.set(url)
+                        if (!url.isNullOrBlank()) {
+                            activePageUrl.set(url)
+                            notifyUi(visible = humanSurfaceShown, url = url)
+                        }
                     }
 
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -382,7 +429,7 @@ class HardenedWebViewResolver(
                                 }
                                 trace.add("Unwrapped intent:// -> ${unwrappedIntent.take(64)}")
                                 if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(unwrappedIntent) ||
-                                    DownloadAndSchemeGuard.isKnownCloudFileHost(unwrappedIntent)
+                                    (DownloadAndSchemeGuard.isKnownCloudFileHost(unwrappedIntent) && !DownloadAndSchemeGuard.isHubCloudHost(unwrappedIntent))
                                 ) {
                                     completeWithDestination(unwrappedIntent, currentPage)
                                 } else {
@@ -406,7 +453,7 @@ class HardenedWebViewResolver(
                         }
 
                         if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(rawTarget) ||
-                            DownloadAndSchemeGuard.isKnownCloudFileHost(rawTarget)
+                            (DownloadAndSchemeGuard.isKnownCloudFileHost(rawTarget) && !DownloadAndSchemeGuard.isHubCloudHost(rawTarget))
                         ) {
                             completeWithDestination(rawTarget, currentPage)
                             return true
@@ -430,8 +477,35 @@ class HardenedWebViewResolver(
                         }
                         notifyUi(visible = humanSurfaceShown, url = landed)
 
+                        if (DownloadAndSchemeGuard.isHubCloudHost(landed)) {
+                            val snapshotUrl = landed
+                            val snapshotReferer = referer ?: gateUrl
+                            if (cm != null) runCatching { cm.flush() }
+                            val rawCookie = if (cm != null) runCatching { cm.getCookie(snapshotUrl) }.getOrNull().orEmpty() else ""
+                            snapshotUrl.toHttpUrlOrNull()?.let { httpUrl ->
+                                val cookieMap = rawCookie.split(';').mapNotNull { part ->
+                                    val k = part.substringBefore('=').trim()
+                                    val v = part.substringAfter('=', "").trim()
+                                    if (k.isBlank() || v.isBlank()) null else k to v
+                                }.toMap()
+                                if (cookieMap.isNotEmpty()) cookieJar.seedCookies(httpUrl, cookieMap)
+                            }
+                            ioScope.launch {
+                                val hc = httpFastPath.resolve(snapshotUrl, snapshotReferer, wantDownload = true)
+                                if (!disposed.get() && !result.isCompleted && hc is FastPathResult.Resolved && hc.targets.isNotEmpty()) {
+                                    trace.add("HubCloud auto-extracted ${hc.targets.size} mirror(s) without ads")
+                                    result.complete(
+                                        SandboxResolutionResult.Captured(
+                                            targets = hc.targets.map { it.copy(trace = trace + it.trace) },
+                                            blockedCount = blockedCount.get()
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
                         if (DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(landed) ||
-                            DownloadAndSchemeGuard.isKnownCloudFileHost(landed)
+                            (DownloadAndSchemeGuard.isKnownCloudFileHost(landed) && !DownloadAndSchemeGuard.isHubCloudHost(landed))
                         ) {
                             completeWithDestination(landed, landed)
                             return
@@ -488,9 +562,9 @@ class HardenedWebViewResolver(
                             return
                         }
 
+                        mainHandler.removeCallbacks(pollRunnable)
                         pollDomStage()
-                        mainHandler.postDelayed({ pollDomStage() }, 1500L)
-                        mainHandler.postDelayed({ pollDomStage() }, 3500L)
+                        mainHandler.postDelayed(pollRunnable, 1200L)
                     }
                 }
 
@@ -508,30 +582,33 @@ class HardenedWebViewResolver(
                     ?: SandboxResolutionResult.Failed("Gate timed out after ${timeoutMs / 1000}s", blockedCount.get(), trace)
             } finally {
                 disposed.set(true)
+                ioScope.cancel()
                 mainHandler.removeCallbacksAndMessages(null)
                 onSandboxStateChanged(GateSandboxState(webView = null, visibleToUser = false))
                 if (cm != null) {
                     runCatching { cm.removeAllCookies(null) }
                     runCatching { cm.flush() }
                 }
-                runCatching { (web.parent as? android.view.ViewGroup)?.removeView(web) }
                 runCatching { web.stopLoading() }
                 runCatching { web.loadUrl("about:blank") }
                 runCatching { web.clearHistory() }
-                runCatching { web.destroy() }
+                runCatching { (web.parent as? android.view.ViewGroup)?.removeView(web) }
+                mainHandler.postDelayed({
+                    runCatching { web.destroy() }
+                }, 150L)
             }
         }
 
-        if (capturedResult is SandboxResolutionResult.Captured) {
-            val captured = capturedResult.target
+        if (capturedResult is SandboxResolutionResult.Captured && capturedResult.targets.size == 1) {
+            val captured = capturedResult.targets.first()
             if (!DownloadAndSchemeGuard.isDirectDownloadOrMediaTarget(captured.url) &&
                 DownloadAndSchemeGuard.isKnownCloudFileHost(captured.url)
             ) {
                 val post = httpFastPath.resolve(captured.url, captured.referer, wantDownload = true)
                 if (post is FastPathResult.Resolved && post.targets.isNotEmpty()) {
-                    val upgraded = post.targets.first().copy(
-                        trace = captured.trace + post.trace
-                    )
+                    val upgraded = post.targets.map {
+                        it.copy(trace = captured.trace + post.trace)
+                    }
                     return SandboxResolutionResult.Captured(upgraded, capturedResult.blockedCount)
                 }
             }
