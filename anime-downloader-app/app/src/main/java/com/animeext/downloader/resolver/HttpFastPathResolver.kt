@@ -1178,7 +1178,8 @@ class HttpFastPathResolver(private val network: NetworkClient) {
             val btnText = a.text().replace(Regex("\\s+"), " ").trim()
             val lowerBtn = btnText.lowercase()
 
-            normalizePixeldrainUrl(resolved)?.let { pdApi ->
+            val pdApi = normalizePixeldrainUrl(resolved)
+            if (pdApi != null) {
                 if (seenUrls.add(pdApi)) {
                     trace.add("HubCloud -> Pixeldrain")
                     out.add(
